@@ -18,16 +18,17 @@ Jcode already:
   `HERDR_PANE_ID`, jcode emits `pane.report_agent_session` (source
   `herdr:jcode`, agent `jcode`) plus `pane.report_agent` state transitions
   (`working` during a turn, `idle` when settled, `blocked` while permission
-  requests are unresolved) and `pane.release_agent` on `session_end`. No Herdr
- -side configuration is required; `JCODE_HERDR_REPORT=0` disables it. On the
+  requests are unresolved) and `pane.release_agent` on `session_end`. No
+  Herdr-side configuration is required; `JCODE_HERDR_REPORT=0` disables it. On the
   shared daemon, reports are per client pane via the same task-local terminal
   env that scopes shell hooks (`hooks::with_client_terminal_env`).
 
 Verified end to end against Herdr 0.8.2: panes running a jcode TUI appear in
 `herdr agent list` as `jcode` with live `working`/`idle`/`done` rollups and
 release on close. The only piece Herdr still ignores is session-reference
-*persistence* (see below): reporting uses Herdr's documented custom-source
-protocol, but restoring requires the official-agent allowlist.
+*persistence* (see below): reports arrive on Herdr's socket protocol with
+the `herdr:jcode` source, but restoring requires Herdr to accept that
+source on its official-agent allowlist.
 
 ## Recommended first Herdr integration
 
