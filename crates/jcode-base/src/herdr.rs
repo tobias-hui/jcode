@@ -176,6 +176,26 @@ pub fn mark_shared_daemon() {
     SHARED_DAEMON.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Test guard that restores the daemon flag on drop, so an assertion
+/// failure cannot leave later tests in a "shared daemon" process.
+#[cfg(test)]
+struct SharedDaemonGuard;
+
+#[cfg(test)]
+impl SharedDaemonGuard {
+    fn set() -> Self {
+        SHARED_DAEMON.store(true, std::sync::atomic::Ordering::Relaxed);
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for SharedDaemonGuard {
+    fn drop(&mut self) {
+        SHARED_DAEMON.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Read the caller's Herdr pane identity: first from the request-scoped
 /// client terminal env (shared daemon), falling back to the process env only
 /// when no scoped env is active at all (single-process launch). A scoped
@@ -1219,6 +1239,53 @@ mod tests {
         });
         assert_eq!(fake.next_state()["params"]["state"], "idle");
 
+        detach_session(&session);
+        clear_herdr_env();
+    }
+
+    /// Core daemon safety property: a shared-server process must never fall
+    /// back to its own (possibly Herdr-inherited) env for pane identity —
+    /// otherwise headless/ambient work would misreport into whatever pane
+    /// happened to spawn the daemon. Only client request scopes count.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn shared_daemon_ignores_process_env_without_scope() {
+        let _guard = crate::storage::lock_test_env();
+        let fake = FakeHerdr::new();
+        set_herdr_env(&fake.socket);
+        let session = unique_session("daemonenv");
+
+        let _daemon_guard = SharedDaemonGuard::set();
+        report_observer_event(&hook_event(
+            "session_start",
+            &session,
+            &[("SOURCE", "create")],
+        ));
+        fake.assert_no_request();
+        assert!(
+            !is_tracked(&session),
+            "daemon process env must not create pane identity without client scope"
+        );
+
+        // With a client scope carrying Herdr vars, the same daemon reports.
+        let scoped = vec![
+            ("HERDR_ENV".to_string(), "1".to_string()),
+            (
+                "HERDR_SOCKET_PATH".to_string(),
+                fake.socket.to_string_lossy().to_string(),
+            ),
+            ("HERDR_PANE_ID".to_string(), "w1:p-daemon".to_string()),
+        ];
+        let event_session = session.clone();
+        crate::hooks::with_client_terminal_env(scoped, async move {
+            crate::hooks::dispatch_observer(
+                crate::hooks::HookEvent::new("session_start")
+                    .session_id(&event_session)
+                    .field("SOURCE", "create"),
+            );
+        })
+        .await;
+        fake.next_session();
+        fake.next_state();
         detach_session(&session);
         clear_herdr_env();
     }
