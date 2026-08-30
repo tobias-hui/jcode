@@ -136,6 +136,19 @@ fn reporting_disabled() -> bool {
     )
 }
 
+/// True when Herdr's own jcode hook adapter is installed (upstream
+/// `herdr integration install jcode` appends a `herdr-agent-state` command
+/// to `[hooks] session_start`). The adapter reports under this same
+/// `herdr:jcode` source; two reporters would fight over the source's seq
+/// ramp and drop each other's updates, so the adapter (explicitly installed
+/// by the user) wins and the native emitter stays silent. Checked through
+/// `hook_commands`, so config reloads flip it without a restart.
+fn hook_adapter_installed() -> bool {
+    crate::hooks::hook_commands("session_start")
+        .iter()
+        .any(|command| command.contains("herdr-agent-state"))
+}
+
 /// Monotonic floor so a restart can never reuse a Herdr seq number.
 fn initial_seq() -> u64 {
     std::time::SystemTime::now()
@@ -171,7 +184,7 @@ pub fn mark_shared_daemon() {
 /// process never consults its own env: work outside a client scope has no
 /// displayable pane.
 fn current_pane() -> Option<PaneIdentity> {
-    if reporting_disabled() {
+    if reporting_disabled() || hook_adapter_installed() {
         return None;
     }
     let (herdr_env, socket_path, pane_id) = if crate::hooks::has_client_terminal_env() {
@@ -471,11 +484,11 @@ pub fn report_observer_event(event: &crate::hooks::HookEvent) {
                 if let Some(reporter) = map.get_mut(session_id) {
                     // User activity answered any outstanding prompt (possibly
                     // out-of-band); drop stale pins before recomputing.
-                    if !reporter.pending_permissions.is_empty() {
-                        if let Ok(mut owners) = permission_owners().lock() {
-                            for (request_id, _) in reporter.pending_permissions.drain(..) {
-                                owners.remove(&request_id);
-                            }
+                    if !reporter.pending_permissions.is_empty()
+                        && let Ok(mut owners) = permission_owners().lock()
+                    {
+                        for (request_id, _) in reporter.pending_permissions.drain(..) {
+                            owners.remove(&request_id);
                         }
                     }
                     reporter.turn_active = true;
@@ -1206,6 +1219,46 @@ mod tests {
         });
         assert_eq!(fake.next_state()["params"]["state"], "idle");
 
+        detach_session(&session);
+        clear_herdr_env();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn installed_hook_adapter_suppresses_native_emitter() {
+        let _guard = crate::storage::lock_test_env();
+        let fake = FakeHerdr::new();
+        set_herdr_env(&fake.socket);
+        let session = unique_session("adapter");
+
+        // Same command-shape upstream's `herdr integration install jcode`
+        // appends to [hooks] session_start (herdrdev/herdr#2248).
+        unsafe {
+            std::env::set_var(
+                "JCODE_HOOK_SESSION_START",
+                "~/.jcode/hooks/herdr-agent-state.sh",
+            );
+        }
+        assert!(
+            !active(),
+            "native emitter must defer to the installed adapter"
+        );
+        report_observer_event(&hook_event(
+            "session_start",
+            &session,
+            &[("SOURCE", "create")],
+        ));
+        fake.assert_no_request();
+        assert!(!is_tracked(&session));
+
+        unsafe { std::env::remove_var("JCODE_HOOK_SESSION_START") };
+        assert!(active(), "removing the adapter re-enables native reports");
+        report_observer_event(&hook_event(
+            "session_start",
+            &session,
+            &[("SOURCE", "create")],
+        ));
+        fake.next_session();
+        fake.next_state();
         detach_session(&session);
         clear_herdr_env();
     }

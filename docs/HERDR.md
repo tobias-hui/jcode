@@ -87,17 +87,30 @@ Behavior established by direct socket experiments (NDJSON against
   `fallback_reason: unknown_agent`. A new agent therefore requires the
   upstream changes below regardless of what the agent emits.
 
-## Required Herdr-side work
+## Upstream status (as of 2026-08-30)
 
-A first-class integration cannot be shipped only as a remote detection manifest. Herdr currently hard-codes known agent kinds, official session sources, restore commands, and install targets. The upstream implementation needs:
+The Herdr-side work is not speculative; it is an open PR by the jcode
+maintainer: [herdrdev/herdr#2248](https://github.com/herdrdev/herdr/pull/2248)
+(invited via herdr Discussion #1848), which adds `jcode` to
+`IntegrationTarget`, ships a `session_start` hook adapter, accepts
+`("herdr:jcode", "jcode")` as an official session source, persists the id
+reference, maps restore to `jcode --resume <id>`, and bundles process
+detection. Review status: detection approved; the maintainer asked for
+fixes to the adapter's shared-server pane routing and `sh -c` hook execution
+(herdr#2248 review, 2026-08-05) — both are solved jcode-side by
+[jcode#758](https://github.com/1jehuang/jcode/pull/758) (multi-hook arrays +
+per-client terminal env, merged 2026-08-06, shipped in v0.81.x), and the PR
+is waiting on a rebase by its author.
 
-1. Add `jcode` to `IntegrationTarget`, CLI parsing, labels, command discovery, recommendations, status, install, and uninstall handling.
-2. Nothing to install for lifecycle reporting: jcode emits natively (see Current compatibility). Any Herdr-side hook adapter would be redundant; keep the integration session/restore-only.
-3. Accept `(herdr:jcode, jcode)` as an official session source (state and session reports already arrive on this socket protocol from live jcode builds).
-4. Persist its ID session reference and map it to `jcode --resume <id>` during restore.
-5. Add Jcode process detection (foreground `jcode` binary) for pre-native-build sessions; a bundled screen manifest is optional now that jcode is a lifecycle authority when attached.
-6. With native reporting, jcode is a full lifecycle authority (working/idle/blocked/release) whenever it is attached; Herdr should prefer live reports and fall back to process detection only when none arrived (old builds, disabled reporting, daemon crash before release).
-7. Add integration versioning, replacement-source handling, schema/UI wiring, install/uninstall tests, restore-plan tests, detection fixtures, and documentation.
+Coexistence with the native emitter: if the adapter ever lands and gets
+installed, it appends a `herdr-agent-state` command to
+`[hooks] session_start` and reports under the *same* `herdr:jcode` source;
+two reporters on one source would drop each other's updates via the seq
+ramp. `herdr.rs` therefore defers to the adapter automatically whenever one
+is configured (`hook_adapter_installed`), so installing it or not is always
+safe. Until #2248 lands, Herdr shows no session restore for jcode (its
+official-source allowlist drops the reference — see Known gap above), which
+is the only lifecycle feature the native emitter cannot cover alone.
 
 Relevant upstream files as of Herdr commit `eacea2daf0b72973173b728936b27478374f2cd2`:
 
