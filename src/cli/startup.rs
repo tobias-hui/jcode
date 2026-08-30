@@ -70,6 +70,11 @@ pub async fn run() -> Result<()> {
         );
     });
 
+    // Permission lifecycle events also feed native terminal-multiplexer
+    // reporting (Herdr blocked pins). The observer is a cheap no-op when no
+    // Herdr pane is attached to the requesting client.
+    crate::safety::register_permission_observer(crate::herdr::observe_permission_event);
+
     // Invert the legacy memory -> skill dependency: memory collects synthetic
     // entries from registered providers, and skill (the higher layer that
     // depends on MemoryEntry) registers its registry->memory adapter here.

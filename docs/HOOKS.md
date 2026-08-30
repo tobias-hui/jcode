@@ -139,6 +139,12 @@ post_tool     = "~/bin/jcode-event-log"
 
 ## Design notes
 
+- Lifecycle observer events also drive native Herdr reporting
+  ([`HERDR.md`](HERDR.md)): when the requesting client is inside a Herdr
+  pane, `dispatch_observer` publishes session identity and
+  working/idle/blocked state to the pane's Herdr socket. `hook_configured`
+  therefore stays true for the four lifecycle events while Herdr watches,
+  even with no shell hook set. Set `JCODE_HERDR_REPORT=0` to opt out.
 - Hook lookups are config-driven and re-read on config reload; you can add or
   change hooks without restarting jcode.
 - Hot paths (`pre_tool`/`post_tool`) check whether a hook is configured before

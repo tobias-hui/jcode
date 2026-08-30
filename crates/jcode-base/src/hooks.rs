@@ -81,6 +81,14 @@ impl HookEvent {
         self.fields.push((key, value.into()));
         self
     }
+
+    /// Read an extra field by key (e.g. `SOURCE`, `STATUS`).
+    pub fn field_value(&self, key: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// Run `future` with the terminal identity of the client that initiated it.
@@ -92,6 +100,26 @@ where
     F: std::future::Future,
 {
     CLIENT_TERMINAL_ENV.scope(env, future).await
+}
+
+/// Whether a request-scoped client terminal env is active for this task.
+/// Shared-server request handlers wrap session work in
+/// `with_client_terminal_env`; outside such a scope the process env applies.
+pub fn has_client_terminal_env() -> bool {
+    CLIENT_TERMINAL_ENV.try_with(|_| ()).is_ok()
+}
+
+/// Read one variable from the request-scoped client terminal env, or `None`
+/// when no scoped env is active or the variable is not part of the snapshot.
+pub fn client_terminal_env_entry(key: &str) -> Option<String> {
+    CLIENT_TERMINAL_ENV
+        .try_with(|env| {
+            env.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.clone())
+        })
+        .ok()
+        .flatten()
 }
 
 /// The configured commands for `event`, in declaration order.
@@ -123,9 +151,13 @@ pub fn hook_command(event: &str) -> Option<String> {
 }
 
 /// Whether a hook is configured for `event`. Cheap; used by hot paths to
-/// skip payload construction entirely when no hook is set.
+/// skip payload construction entirely when no hook is set. Native Herdr
+/// reporting consumes the same lifecycle events through
+/// [`dispatch_observer`], so a watching Herdr client counts as configured
+/// for those events (turn/session boundaries only; tool-hot paths are not
+/// consumed and must not pay payload construction).
 pub fn hook_configured(event: &str) -> bool {
-    !hook_commands(event).is_empty()
+    !hook_commands(event).is_empty() || crate::herdr::consumes_event(event)
 }
 
 /// True when running inside a hook process (recursion guard).
@@ -221,6 +253,11 @@ fn build_hook_process(
 /// Detached and fire-and-forget: failures are logged, never propagated, and
 /// the hook process cannot block the agent.
 pub fn dispatch_observer(event: HookEvent) {
+    // Native Herdr lifecycle reporting observes the same funnel as shell
+    // hooks: it stays correct on the shared daemon because dispatch runs
+    // under the owning client's terminal env. No-op unless Herdr is attached
+    // to this pane's client.
+    crate::herdr::report_observer_event(&event);
     let command_lines = hook_commands(event.event);
     if command_lines.is_empty() {
         return;

@@ -2281,6 +2281,9 @@ impl Server {
 
     /// Start the server (both main and debug sockets)
     pub async fn run(&self) -> Result<()> {
+        // This process serves many clients; Herdr pane identity comes from
+        // each client's request scope, never from this process's env.
+        crate::herdr::mark_shared_daemon();
         // Ensure socket directory exists (for named sockets like /run/user/1000/jcode/)
         if let Some(parent) = self.socket_path.parent() {
             std::fs::create_dir_all(parent)?;

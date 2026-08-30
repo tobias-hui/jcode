@@ -28,6 +28,71 @@ fn dispatch_permission_notification(action: &str, description: &str, request_id:
     }
 }
 
+/// Permission lifecycle event for native integrations (Herdr et al.).
+///
+/// Unlike the notification dispatcher (a one-shot user alert), this is the
+/// lifecycle view: integrations mark the owning session `blocked` while a
+/// decision is outstanding and clear it on resolution. Observers must be
+/// non-blocking; they run on the agent's hot path.
+#[derive(Debug)]
+pub enum PermissionEvent<'a> {
+    /// Queued and awaiting a user decision.
+    Queued(&'a PermissionRequest),
+    /// Decided, denied, or expired; only the request id is known here.
+    Resolved { request_id: &'a str },
+}
+
+type PermissionObserver = fn(PermissionEvent);
+
+static PERMISSION_OBSERVER: OnceLock<PermissionObserver> = OnceLock::new();
+
+/// Register the permission lifecycle observer.
+pub fn register_permission_observer(observer: PermissionObserver) {
+    let _ = PERMISSION_OBSERVER.set(observer);
+}
+
+fn notify_permission(event: PermissionEvent) {
+    if let Some(observer) = PERMISSION_OBSERVER.get() {
+        observer(event);
+    }
+}
+
+/// Extract the owning session id from a permission request's context.
+///
+/// Requests carry `context.session_id` when the submitting tool knows it
+/// (the ambient permission tool does); requests without context cannot be
+/// attributed to a session and are not observable by session-scoped
+/// integrations.
+pub fn permission_request_session_id(request: &PermissionRequest) -> Option<String> {
+    request
+        .context
+        .as_ref()
+        .and_then(|context| context.get("session_id"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+/// Construct a permission request for tests (also used by integration
+/// observers to emit deterministic events).
+#[cfg(test)]
+pub fn permission_request_for_test(
+    id: &str,
+    session_id: &str,
+    action: &str,
+    description: &str,
+) -> PermissionRequest {
+    PermissionRequest {
+        id: id.to_string(),
+        action: action.to_string(),
+        description: description.to_string(),
+        rationale: String::new(),
+        urgency: Urgency::Normal,
+        wait: false,
+        created_at: Utc::now(),
+        context: Some(serde_json::json!({ "session_id": session_id })),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Action classification
 // ---------------------------------------------------------------------------
@@ -188,6 +253,7 @@ impl SafetySystem {
         let request_id = request.id.clone();
         let action = request.action.clone();
         let description = request.description.clone();
+        let observed = request.clone();
         if let Ok(mut q) = self.queue.lock() {
             q.push(request);
             let _ = persist_queue(&q);
@@ -195,6 +261,7 @@ impl SafetySystem {
         // Send high-priority notification for permission request via the
         // registered dispatcher (inverts the safety -> notifications edge).
         dispatch_permission_notification(&action, &description, &request_id);
+        notify_permission(PermissionEvent::Queued(&observed));
         PermissionResult::Queued { request_id }
     }
 
@@ -214,6 +281,10 @@ impl SafetySystem {
             }
             *q = retained;
             let _ = persist_queue(&q);
+        }
+
+        for (request_id, _) in &expired {
+            notify_permission(PermissionEvent::Resolved { request_id });
         }
 
         if expired.is_empty() {
@@ -252,6 +323,8 @@ impl SafetySystem {
             q.retain(|r| r.id != request_id);
             let _ = persist_queue(&q);
         }
+
+        notify_permission(PermissionEvent::Resolved { request_id });
 
         let decision = Decision {
             request_id: request_id.to_string(),
@@ -393,6 +466,10 @@ pub fn record_permission_via_file(
     };
     queue.retain(|r| r.id != request_id);
     persist_queue(&queue)?;
+    // External decision paths (IMAP/Telegram reply pollers) run inside this
+    // process, so session-scoped observers can unpin promptly instead of
+    // waiting for the next turn_start to clear the stale pin.
+    notify_permission(PermissionEvent::Resolved { request_id });
 
     let hp = history_path()?;
     if let Some(parent) = hp.parent() {
