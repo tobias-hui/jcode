@@ -3,10 +3,11 @@
 //!
 //! [Herdr](https://herdr.dev) is a terminal workspace manager for coding
 //! agents. When a jcode session runs inside a Herdr pane, Herdr tracks the
-//! pane's agent lifecycle (`working` / `idle` / `blocked`) and restores
-//! panes with the agent's native session id. Without a reporter, Herdr can
-//! only screen-scrape the pane for an agent it knows — and knows nothing of
-//! jcode.
+//! pane's agent lifecycle (`working` / `idle` / `blocked`) and, once it
+//! accepts jcode as an official session source (herdrdev/herdr#2248),
+//! restores panes with the agent's native session id. Without a reporter,
+//! Herdr can only screen-scrape the pane for an agent it knows — and knows
+//! nothing of jcode.
 //!
 //! This module is the emitter side of that contract: it speaks Herdr's
 //! socket API (`pane.report_agent`, `pane.report_agent_session`,
@@ -20,11 +21,13 @@
 //!   [`report_observer_event`]. The shared daemon runs dispatch under the
 //!   owning client's terminal env (`with_client_terminal_env`), so reports
 //!   stay per-pane correct.
-//! - `safety::SafetySystem::request_permission` calls
-//!   [`report_permission_queued`] so a mid-turn permission prompt shows as
-//!   `blocked` immediately instead of only at turn end.
-//! - decision paths (`record_decision`, expiry, file-based replies) call
-//!   [`report_permission_resolved`].
+//! - `safety::register_permission_observer` is wired to
+//!   [`observe_permission_event`] at CLI startup: queued requests pin
+//!   `blocked` mid-turn, and decisions (record_decision, dead-session
+//!   expiry, IMAP/Telegram file-based replies) unpin.
+//! - when a Herdr-installed `herdr-agent-state` hook adapter is configured,
+//!   the native emitter stays silent so the two reporters never fight over
+//!   the shared `herdr:jcode` seq ramp.
 //!
 //! State model: a session publishes `working` during a turn and `idle` when
 //! the turn settles, unless it has unresolved permission requests, which pin
