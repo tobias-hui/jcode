@@ -68,6 +68,25 @@ jcode --resume <agent_session_id>
 Jcode session IDs are opaque strings and fit Herdr's ID-based session
 reference model. No transcript path is needed.
 
+## Known gap (verified against Herdr 0.8.2)
+
+Behavior established by direct socket experiments (NDJSON against
+`$HERDR_SOCKET_PATH`):
+
+- `pane.report_agent` / `pane.report_agent_session` from any `source` are
+  accepted and drive the pane's agent label, state, rollups, and waits.
+- `agent_session_id` is *persisted* (and later used for restore) only for
+  Herdr's hard-coded official sources. A `herdr:jcode`-shaped source is
+  accepted but the reference is dropped; a `custom:*` source likewise stores
+  nothing.
+- `pane.release_agent` and stale-`seq` ordering behave per docs; releases
+  with a seq below the last accepted state report are ignored, so teardown
+  must reuse the reporter's own seq ramp.
+- Local `~/.config/herdr/agent-detection/<agent>.toml` overrides can only
+  replace manifests for agents Herdr already recognizes; an unknown id stays
+  `fallback_reason: unknown_agent`. A new agent therefore requires the
+  upstream changes below regardless of what the agent emits.
+
 ## Required Herdr-side work
 
 A first-class integration cannot be shipped only as a remote detection manifest. Herdr currently hard-codes known agent kinds, official session sources, restore commands, and install targets. The upstream implementation needs:
@@ -94,11 +113,15 @@ Relevant upstream files as of Herdr commit `eacea2daf0b72973173b728936b27478374f
 `crates/jcode-base/src/herdr.rs` is the native emitter and is a lifecycle
 authority for attached sessions. Deliberate design choices:
 
-- `blocked` covers queued permission requests (`safety::PermissionEvent`
-  observer). Decisions made in another process (the `jcode permissions` TUI,
-  email/Telegram reply, expiry) are not individually observable here, so a
-  new `turn_start` clears stale pins — user activity is proof the prompt
-  was answered.
+- `blocked` covers permission requests flowing through the safety queue
+  (`safety::PermissionEvent`): the ambient `permission` tool, and decisions
+  resolved via `record_decision`, dead-session expiry, or IMAP/Telegram
+  file-based replies. The interactive TUI does not currently model
+  ask-the-user as a safety-queue wait, so a mid-turn question publishes
+  `working` and settles to `idle` on turn end — matching how Herdr treats
+  plain idle prompts for agents without a visible approval UI. Wiring an
+  explicit question/approval lifecycle into safety would extend blocked
+  coverage without changing the emitter.
 - Releasing on `session_end` covers normal close; a daemon crash leaves a
   stale `working` until Herdr's process detection disagrees. Mitigated by
   the release-per-pane invariant (a pane is owned by at most one tracked
