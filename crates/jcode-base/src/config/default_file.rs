@@ -389,6 +389,10 @@ cross_provider_failover = "countdown"
 # openai-compatible profile ids ("myprofile"). The active model's routes always
 # stay visible. Unset or empty = show everything.
 # model_picker_providers = ["myprofile", "openrouter"]
+# Hide specific model ids from the /model picker (case-insensitive model-id
+# match; the active model always stays visible). Use for unusable variants a
+# provider catalog still advertises.
+# model_picker_hidden = ["k3-256k", "kimi-for-coding"]
 # Max seconds to wait for streaming data before timing out a request with no
 # data received. Raise this for slow reasoning models (e.g. DeepSeek) that think
 # silently for minutes before emitting tokens. Default: 180.

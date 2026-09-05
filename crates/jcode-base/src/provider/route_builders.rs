@@ -3,10 +3,43 @@ use super::{ModelRoute, RouteCostConfidence, RouteCostSource, provider_for_model
 use std::collections::BTreeSet;
 
 pub fn is_listable_model_name(model: &str) -> bool {
+    listable_model_name_with_declarations(model, &declared_profile_chat_model_ids())
+}
+
+/// `is_listable_model_name` with the declared-chat exemption supplied
+/// explicitly, so the policy is testable without touching process config.
+/// `declared_chat_models` must be lowercased/trimmed.
+pub fn listable_model_name_with_declarations(model: &str, declared_chat_models: &[String]) -> bool {
     let trimmed = model.trim();
-    !trimmed.is_empty()
-        && !matches!(trimmed, "copilot models" | "openrouter models")
-        && !model_name_is_likely_non_chat(trimmed)
+    if trimmed.is_empty() || matches!(trimmed, "copilot models" | "openrouter models") {
+        return false;
+    }
+    // An explicit `input = ["text", ...]` declaration in a user-defined
+    // `[providers.<name>.models]` entry is a user statement that the id is a
+    // chat model, so it must survive the name heuristic below (e.g. DeepSeek's
+    // `deepseek-v4-flash-vision-exp` carries the `vision` token but is a real
+    // multimodal chat model).
+    if declared_chat_models
+        .iter()
+        .any(|id| *id == trimmed.to_ascii_lowercase())
+    {
+        return true;
+    }
+    !model_name_is_likely_non_chat(trimmed)
+}
+
+/// Model ids that a user-defined `[providers.<name>.models]` entry declares as
+/// text-capable via an explicit `input = [...]` containing "text"
+/// (lowercased/trimmed). Empty when no config declares any.
+fn declared_profile_chat_model_ids() -> Vec<String> {
+    crate::config::config()
+        .providers
+        .values()
+        .flat_map(|profile| profile.models.iter())
+        .filter(|model| model.input.iter().any(|input| input == "text"))
+        .map(|model| model.id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 /// Heuristic to keep obviously non-chat models (embeddings, speech, image,

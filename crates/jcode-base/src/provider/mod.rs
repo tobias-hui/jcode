@@ -74,7 +74,8 @@ pub use route_builders::{
     build_anthropic_oauth_route, build_chatgpt_web_route, build_copilot_route,
     build_openai_api_key_route, build_openai_oauth_route, build_openrouter_auto_route,
     build_openrouter_endpoint_route, build_openrouter_fallback_provider_route,
-    is_listable_model_name, listable_model_names_from_routes, openrouter_catalog_model_id,
+    is_listable_model_name, listable_model_name_with_declarations,
+    listable_model_names_from_routes, openrouter_catalog_model_id,
 };
 pub(crate) use routing::{
     anthropic_api_key_route_availability, anthropic_oauth_route_availability,
