@@ -1250,6 +1250,14 @@ pub struct ProviderConfig {
     /// "openai-compatible:myprofile", ...), or openai-compatible profile ids
     /// ("myprofile"). The active model's routes always stay visible.
     pub model_picker_providers: Option<Vec<String>>,
+    /// Hide specific models from the /model picker (model-id matching,
+    /// case-insensitive). Entries are bare model ids such as
+    /// "kimi-for-coding-highspeed". The active model's routes always stay
+    /// visible so the current selection never disappears. Use this to prune
+    /// unusable variants a provider catalog still advertises; provider-level
+    /// filtering belongs to `model_picker_providers`.
+    #[serde(default, alias = "model-picker-hidden", alias = "hidden_models")]
+    pub model_picker_hidden: Option<Vec<String>>,
     /// Max seconds to wait for streaming data before timing out a request with
     /// no data received. Base budget only: high reasoning efforts scale it up
     /// automatically (see `jcode_base::provider::stream_idle_timeout_for_effort`).
@@ -1279,6 +1287,7 @@ impl Default for ProviderConfig {
             same_provider_account_failover: true,
             copilot_premium: None,
             model_picker_providers: None,
+            model_picker_hidden: None,
             stream_idle_timeout_secs: 180,
             max_retries: 8,
             retry_backoff_cap_secs: 30,

@@ -10,8 +10,9 @@ use super::{
     build_openrouter_fallback_provider_route, configured_standard_openrouter_profile_routes,
     copilot, dedupe_model_routes, direct_openai_compatible_profile_routes,
     format_account_model_availability_detail, is_listable_model_name, known_anthropic_model_ids,
-    known_openai_model_ids, model_availability_for_account, openrouter,
-    openrouter_catalog_model_id, provider_for_model, standard_openrouter_profile_configured,
+    known_openai_model_ids, model_availability_for_account,
+    openrouter, openrouter_catalog_model_id, provider_for_model,
+    standard_openrouter_profile_configured,
 };
 
 /// Build the fast local route snapshot used by the TUI model picker while the
@@ -209,6 +210,37 @@ struct OpenRouterRouteStats {
     scheduled_endpoint_refreshes: usize,
 }
 
+/// Normalized model ids from `[provider] model_picker_hidden` (lowercased,
+/// trimmed, empties dropped). Empty when unset.
+fn hidden_picker_model_ids() -> Vec<String> {
+    crate::config::config()
+        .provider
+        .model_picker_hidden
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|id| id.trim().to_ascii_lowercase())
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
+/// Drop routes whose model id appears in `hidden` (already lowercased/trimmed),
+/// keeping the active model's routes unconditionally so the current selection
+/// never disappears from the picker. No-op when `hidden` is empty.
+fn filter_hidden_picker_routes(
+    routes: &mut Vec<ModelRoute>,
+    hidden: &[String],
+    active_model: &str,
+) {
+    if hidden.is_empty() {
+        return;
+    }
+    routes.retain(|route| {
+        let model = route.model.trim().to_ascii_lowercase();
+        model == active_model || !hidden.iter().any(|id| id == &model)
+    });
+}
+
 /// Build the full multi-provider route catalog.
 ///
 /// Orchestration only: each provider family contributes routes through its
@@ -280,6 +312,13 @@ pub(super) fn multiprovider_model_routes(provider: &MultiProvider) -> Vec<ModelR
     // / Chutes) dump wholesale into their catalogs. Without this the picker is
     // flooded with hundreds of unusable entries.
     routes.retain(|route| is_listable_model_name(&route.model));
+
+    // Apply `[provider] model_picker_hidden`: drop routes for model ids the
+    // user pruned from the picker. The active model's routes always survive so
+    // the current selection never disappears (same invariant as the provider
+    // allowlist filter).
+    let active_model = provider.model().trim().to_ascii_lowercase();
+    filter_hidden_picker_routes(&mut routes, &hidden_picker_model_ids(), &active_model);
 
     let mut routes = dedupe_model_routes(routes);
 
@@ -1283,6 +1322,7 @@ pub fn remote_model_is_server_copilot_only(model: &str) -> bool {
 mod tests {
     use super::*;
     use crate::auth::{AuthState, ProviderAuth};
+    use crate::provider::listable_model_name_with_declarations;
 
     struct EnvGuard {
         vars: Vec<(&'static str, Option<std::ffi::OsString>)>,
@@ -1417,6 +1457,68 @@ mod tests {
             named_provider_profile_route_for_model_in("some-other-model", &providers).is_none()
         );
         assert!(named_provider_profile_route_for_model_in("", &providers).is_none());
+    }
+
+    /// A user-declared `input = ["text", ...]` model must survive the non-chat
+    /// name heuristic even when its id contains a marker token like `vision`
+    /// (e.g. DeepSeek's `deepseek-v4-flash-vision-exp` multimodal chat model).
+    #[test]
+    fn declared_text_input_exempts_model_from_non_chat_name_heuristic() {
+        let declared = vec!["deepseek-v4-flash-vision-exp".to_string()];
+        assert!(listable_model_name_with_declarations(
+            "deepseek-v4-flash-vision-exp",
+            &declared
+        ));
+        // Case-insensitive match on the declared id.
+        assert!(listable_model_name_with_declarations(
+            "DeepSeek-V4-Flash-Vision-Exp",
+            &declared
+        ));
+        // Without the declaration the heuristic still drops the vision-token id,
+        // and an undeclared vision-token model is never exempted by proximity.
+        assert!(!listable_model_name_with_declarations(
+            "deepseek-v4-flash-vision-exp",
+            &[]
+        ));
+        assert!(!listable_model_name_with_declarations(
+            "some-vision-thing",
+            &declared
+        ));
+        // Regular chat models are unaffected either way.
+        assert!(listable_model_name_with_declarations("glm-5.3-flash", &[]));
+    }
+
+    #[test]
+    fn hidden_picker_models_drop_routes_but_keep_active_model() {
+        let route = |model: &str| ModelRoute {
+            model: model.to_string(),
+            provider: "Kimi Code".to_string(),
+            api_method: "openai-compatible:kimi".to_string(),
+            available: true,
+            detail: String::new(),
+            cheapness: None,
+        };
+        let hidden: Vec<String> = ["k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"]
+            .iter()
+            .map(|id| id.to_ascii_lowercase())
+            .collect();
+
+        // Case-insensitive match; the active model is exempted so the current
+        // selection never disappears from the picker.
+        let mut routes = vec![
+            route("k3"),
+            route("k3-256k"),
+            route("Kimi-For-Coding"),
+            route("kimi-for-coding-highspeed"),
+        ];
+        filter_hidden_picker_routes(&mut routes, &hidden, "kimi-for-coding");
+        let models: Vec<&str> = routes.iter().map(|r| r.model.as_str()).collect();
+        assert_eq!(models, vec!["k3", "Kimi-For-Coding"]);
+
+        // No hidden entries -> untouched.
+        let mut routes = vec![route("k3"), route("k3-256k")];
+        filter_hidden_picker_routes(&mut routes, &[], "k3");
+        assert_eq!(routes.len(), 2);
     }
 
     #[test]
