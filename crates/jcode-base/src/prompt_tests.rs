@@ -389,6 +389,76 @@ fn test_prompt_overlay_files_are_loaded_from_project_and_global_jcode_dirs() {
 }
 
 #[test]
+fn prompt_overlay_file_identity_controls_full_and_split_prompt_loading() {
+    let _guard = crate::storage::lock_test_env();
+    let prev_home = std::env::var_os("JCODE_HOME");
+    let home = tempfile::TempDir::new().unwrap();
+    let jcode_dir = home.path().join(".jcode");
+    std::fs::create_dir_all(&jcode_dir).unwrap();
+    let instructions = "Unique overlay instructions: 中文";
+    let global_overlay = jcode_dir.join("prompt-overlay.md");
+    std::fs::write(&global_overlay, instructions).unwrap();
+
+    let distinct_project = home.path().join("distinct-project");
+    std::fs::create_dir_all(distinct_project.join(".jcode")).unwrap();
+    std::fs::write(
+        distinct_project.join(".jcode/prompt-overlay.md"),
+        instructions,
+    )
+    .unwrap();
+    let mut cases = vec![
+        ("same path", home.path().to_path_buf(), 1),
+        ("distinct files with equal contents", distinct_project, 2),
+    ];
+    cases.push(("global only", home.path().join("no-project-overlay"), 1));
+
+    #[cfg(unix)]
+    {
+        let alias_project = home.path().join("alias-project");
+        std::fs::create_dir_all(alias_project.join(".jcode")).unwrap();
+        std::os::unix::fs::symlink(
+            &global_overlay,
+            alias_project.join(".jcode/prompt-overlay.md"),
+        )
+        .unwrap();
+        cases.push(("symlink alias", alias_project, 1));
+    }
+
+    crate::env::set_var("JCODE_HOME", &jcode_dir);
+    let results: Vec<_> = cases
+        .into_iter()
+        .map(|(label, project, expected_count)| {
+            let full = build_system_prompt_full(None, &[], false, None, Some(&project));
+            let split = build_system_prompt_split(None, &[], false, None, Some(&project));
+            (label, expected_count, full, split)
+        })
+        .collect();
+    if let Some(prev_home) = prev_home {
+        crate::env::set_var("JCODE_HOME", prev_home);
+    } else {
+        crate::env::remove_var("JCODE_HOME");
+    }
+
+    for (label, expected_count, (full, full_info), (split, split_info)) in results {
+        for (mode, prompt, info) in [
+            ("full", &full, full_info),
+            ("split", &split.static_part, split_info),
+        ] {
+            assert_eq!(
+                prompt.matches(instructions).count(),
+                expected_count,
+                "{label}: {mode} prompt duplicates or loses overlay instructions"
+            );
+            assert_eq!(
+                info.prompt_overlay_chars,
+                instructions.len() * expected_count,
+                "{label}: {mode} overlay size must track loaded files"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_preferred_tools_files_are_loaded_from_project_and_global_jcode_dirs() {
     let _guard = crate::storage::lock_test_env();
     let prev_home = std::env::var_os("JCODE_HOME");

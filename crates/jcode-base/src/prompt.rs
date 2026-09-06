@@ -992,8 +992,10 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     };
 
     let project_dir = working_dir.unwrap_or(Path::new("."));
+    let project_overlay = project_dir.join(".jcode").join("prompt-overlay.md");
+    let project_identity = std::fs::canonicalize(&project_overlay).ok();
     if let Some((content, size)) = load_file(
-        &project_dir.join(".jcode").join("prompt-overlay.md"),
+        &project_overlay,
         "Project Prompt Overlay (.jcode/prompt-overlay.md)",
     ) {
         total_chars += size;
@@ -1001,6 +1003,11 @@ fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<Str
     }
 
     if let Ok(global_overlay) = crate::storage::jcode_dir().map(|dir| dir.join("prompt-overlay.md"))
+        && !project_identity.as_ref().is_some_and(|project| {
+            std::fs::canonicalize(&global_overlay)
+                .ok()
+                .is_some_and(|global| project == &global)
+        })
         && let Some((content, size)) = load_file(
             &global_overlay,
             "Global Prompt Overlay (~/.jcode/prompt-overlay.md)",
