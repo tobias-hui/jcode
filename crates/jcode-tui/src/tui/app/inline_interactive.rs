@@ -170,6 +170,29 @@ fn filter_routes_by_provider_allowlist(
     }
 }
 
+/// True when an expanded effort row must be hidden from the picker by a
+/// `[provider] model_picker_hidden` rule. The current selection is exempt so
+/// it can never disappear mid-session (switching away re-hides it).
+fn picker_effort_row_hidden(
+    rules: &[jcode_provider_core::HiddenPickerRule],
+    model: &str,
+    provider: &str,
+    api_method: &str,
+    effort: &str,
+    is_current: bool,
+) -> bool {
+    !is_current
+        && rules.iter().any(|rule| {
+            jcode_provider_core::hidden_picker_rule_matches(
+                rule,
+                model,
+                provider,
+                api_method,
+                Some(effort),
+            )
+        })
+}
+
 fn model_picker_usage_key(model_name: &str, route: &PickerOption, effort: Option<&str>) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}\u{1f}{}",
@@ -1761,19 +1784,14 @@ impl App {
                                 &current_provider,
                                 current_api_method.as_deref(),
                             );
-                        // Hidden effort rows never appear; the current
-                        // selection is exempt so it can never disappear.
-                        if !is_this_current
-                            && hidden_rules.iter().any(|rule| {
-                                jcode_provider_core::hidden_picker_rule_matches(
-                                    rule,
-                                    name,
-                                    &route.provider,
-                                    &route.api_method,
-                                    Some(effort),
-                                )
-                            })
-                        {
+                        if picker_effort_row_hidden(
+                            &hidden_rules,
+                            name,
+                            &route.provider,
+                            &route.api_method,
+                            effort,
+                            is_this_current,
+                        ) {
                             continue;
                         }
                         entries.push(PickerEntry {
@@ -3990,9 +4008,10 @@ mod tests {
         filter_routes_by_provider_allowlist, key_char_eq_ignore_ascii_case,
         model_picker_effort_matches_default, model_picker_route_is_current,
         model_picker_route_is_default, model_picker_route_is_recommended,
-        next_model_favorite_after_current, picker_is_runtime_model_picker,
-        remote_model_catalog_cache_is_fresh, remote_model_catalog_cache_origin,
-        remote_model_catalog_snapshot_is_safe, route_supports_reasoning_effort,
+        next_model_favorite_after_current, picker_effort_row_hidden,
+        picker_is_runtime_model_picker, remote_model_catalog_cache_is_fresh,
+        remote_model_catalog_cache_origin, remote_model_catalog_snapshot_is_safe,
+        route_supports_reasoning_effort,
     };
     use crate::tui::{
         AgentModelTarget, App, InlineInteractiveState, PickerAction, PickerEntry, PickerKind,
@@ -4583,6 +4602,107 @@ mod tests {
         assert!(!route_supports_reasoning_effort("openai-compatible"));
         assert!(!route_supports_reasoning_effort("remote-catalog"));
         assert!(!route_supports_reasoning_effort("current"));
+    }
+
+    #[test]
+    fn picker_effort_hidden_rules_prune_expanded_rows_per_lane() {
+        // Real config grammar -> rules, exactly as the picker builds them.
+        let configured = ["openai".to_string()];
+        let rules = jcode_provider_core::parse_hidden_picker_rules(
+            [
+                "gpt-reserve",
+                "openai-api-key:gpt-5.6-luna",
+                "openai-oauth:gpt-6-astra",
+                "openai-oauth:gpt-5.6-luna:!med",
+                "openai-api-key:gpt-6-astra:!med",
+            ],
+            &configured,
+        );
+        let oauth_luna = model_route("gpt-5.6-luna", "OpenAI", "openai-oauth");
+        let key_astra = model_route("gpt-6-astra", "OpenAI", "openai-api-key");
+        let key_luna = model_route("gpt-5.6-luna", "OpenAI", "openai-api-key");
+        let oauth_astra = model_route("gpt-6-astra", "OpenAI", "openai-oauth");
+        let reserve = model_route("gpt-reserve", "OpenAI", "openai-oauth");
+
+        // Whole-route drops (no effort dimension) via the bare/lane rules.
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-reserve",
+            &reserve.provider,
+            &reserve.api_method,
+            "high",
+            false
+        ));
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-5.6-luna",
+            &key_luna.provider,
+            &key_luna.api_method,
+            "high",
+            false
+        ));
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-6-astra",
+            &oauth_astra.provider,
+            &oauth_astra.api_method,
+            "high",
+            false
+        ));
+
+        // Kept lane: oauth luna only survives at (med); other efforts hidden.
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-5.6-luna",
+            &oauth_luna.provider,
+            &oauth_luna.api_method,
+            "low",
+            false
+        ));
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-5.6-luna",
+            &oauth_luna.provider,
+            &oauth_luna.api_method,
+            "max",
+            false
+        ));
+        assert!(!picker_effort_row_hidden(
+            &rules,
+            "gpt-5.6-luna",
+            &oauth_luna.provider,
+            &oauth_luna.api_method,
+            "medium",
+            false
+        ));
+
+        // Kept lane: api-key astra only survives at (med).
+        assert!(picker_effort_row_hidden(
+            &rules,
+            "gpt-6-astra",
+            &key_astra.provider,
+            &key_astra.api_method,
+            "high",
+            false
+        ));
+        assert!(!picker_effort_row_hidden(
+            &rules,
+            "gpt-6-astra",
+            &key_astra.provider,
+            &key_astra.api_method,
+            "medium",
+            false
+        ));
+
+        // Current selection is exempt so it never disappears mid-session.
+        assert!(!picker_effort_row_hidden(
+            &rules,
+            "gpt-5.6-luna",
+            &oauth_luna.provider,
+            &oauth_luna.api_method,
+            "low",
+            true
+        ));
     }
 
     #[test]

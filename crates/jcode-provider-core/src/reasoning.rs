@@ -66,14 +66,19 @@ fn hidden_picker_segment_is_lane(segment: &str, configured_lanes: &[String]) -> 
     if normalized.is_empty() {
         return false;
     }
-    FIXED_HIDDEN_LANES.iter().any(|lane| normalize_hidden_picker_lane(lane) == normalized)
+    FIXED_HIDDEN_LANES
+        .iter()
+        .any(|lane| normalize_hidden_picker_lane(lane) == normalized)
         || configured_lanes.iter().any(|lane| lane == &normalized)
 }
 
 /// Parse one raw `model_picker_hidden` entry. `configured_lanes` must be
 /// normalized (see [`normalize_hidden_picker_lane`]). Returns `None` for empty
 /// or whitespace-only input.
-pub fn parse_hidden_picker_rule(entry: &str, configured_lanes: &[String]) -> Option<HiddenPickerRule> {
+pub fn parse_hidden_picker_rule(
+    entry: &str,
+    configured_lanes: &[String],
+) -> Option<HiddenPickerRule> {
     let entry = entry.trim();
     if entry.is_empty() {
         return None;
@@ -86,7 +91,9 @@ pub fn parse_hidden_picker_rule(entry: &str, configured_lanes: &[String]) -> Opt
     let mut model = lower.clone();
     if segments.len() >= 2 {
         // Trailing effort segment: `...:med`, `...:low,high`, or `...:!med`.
-        if let Some((list, negated)) = parse_hidden_effort_segment(segments.last().copied().unwrap_or_default()) {
+        if let Some((list, negated)) =
+            parse_hidden_effort_segment(segments.last().copied().unwrap_or_default())
+        {
             efforts = list;
             efforts_negated = negated;
             model = segments[..segments.len() - 1].join(":");
@@ -197,7 +204,13 @@ pub fn hidden_picker_rule_matches_route(
     route: &crate::ModelRoute,
     effort: Option<&str>,
 ) -> bool {
-    hidden_picker_rule_matches(rule, &route.model, &route.provider, &route.api_method, effort)
+    hidden_picker_rule_matches(
+        rule,
+        &route.model,
+        &route.provider,
+        &route.api_method,
+        effort,
+    )
 }
 
 /// String-field variant of [`hidden_picker_rule_matches_route`] for callers
@@ -223,7 +236,11 @@ pub fn hidden_picker_rule_matches(
         // be rendered, and route-level filters never see effort rows at all.
         let Some(effort) = effort else { return false };
         let listed = rule.efforts.iter().any(|e| e == effort);
-        return if rule.efforts_negated { !listed } else { listed };
+        return if rule.efforts_negated {
+            !listed
+        } else {
+            listed
+        };
     }
     true
 }
@@ -348,7 +365,10 @@ mod tests {
     use super::*;
 
     fn lanes(configured: &[&str]) -> Vec<String> {
-        configured.iter().map(|l| normalize_hidden_picker_lane(l)).collect()
+        configured
+            .iter()
+            .map(|l| normalize_hidden_picker_lane(l))
+            .collect()
     }
 
     #[test]
@@ -370,12 +390,16 @@ mod tests {
         assert_eq!(eff.efforts, vec!["medium".to_string()]);
         assert!(!eff.efforts_negated);
 
-        let keep = parse_hidden_picker_rule("openai-api-key:gpt-6-astra:!med", &configured).unwrap();
+        let keep =
+            parse_hidden_picker_rule("openai-api-key:gpt-6-astra:!med", &configured).unwrap();
         assert_eq!(keep.efforts, vec!["medium".to_string()]);
         assert!(keep.efforts_negated);
 
         let list = parse_hidden_picker_rule("gpt-6-astra:none,minimal", &configured).unwrap();
-        assert_eq!(list.efforts, vec!["none".to_string(), "minimal".to_string()]);
+        assert_eq!(
+            list.efforts,
+            vec!["none".to_string(), "minimal".to_string()]
+        );
         assert!(list.lane.is_none());
 
         // Not an effort segment -> stays part of the model id.
@@ -412,26 +436,62 @@ mod tests {
         let kimi = route("k3", "Kimi Code", "openai-compatible:kimi");
 
         let bare = parse_hidden_picker_rule("gpt-6-astra", &configured).unwrap();
-        assert!(hidden_picker_rule_matches_route(&bare, &api_key, Some("medium")));
+        assert!(hidden_picker_rule_matches_route(
+            &bare,
+            &api_key,
+            Some("medium")
+        ));
         assert!(hidden_picker_rule_matches_route(&bare, &oauth, None));
 
         let api_only = parse_hidden_picker_rule("openai-api-key:gpt-6-astra", &configured).unwrap();
-        assert!(hidden_picker_rule_matches_route(&api_only, &api_key, Some("low")));
-        assert!(!hidden_picker_rule_matches_route(&api_only, &oauth, Some("low")));
+        assert!(hidden_picker_rule_matches_route(
+            &api_only,
+            &api_key,
+            Some("low")
+        ));
+        assert!(!hidden_picker_rule_matches_route(
+            &api_only,
+            &oauth,
+            Some("low")
+        ));
 
         let med_only =
             parse_hidden_picker_rule("openai-api-key:gpt-6-astra:med", &configured).unwrap();
-        assert!(hidden_picker_rule_matches_route(&med_only, &api_key, Some("medium")));
-        assert!(!hidden_picker_rule_matches_route(&med_only, &api_key, Some("low")));
+        assert!(hidden_picker_rule_matches_route(
+            &med_only,
+            &api_key,
+            Some("medium")
+        ));
+        assert!(!hidden_picker_rule_matches_route(
+            &med_only,
+            &api_key,
+            Some("low")
+        ));
         // Effort-scoped rules must not drop the plain (unexpanded) route row.
         assert!(!hidden_picker_rule_matches_route(&med_only, &api_key, None));
 
         let keep_med =
             parse_hidden_picker_rule("openai-api-key:gpt-6-astra:!med", &configured).unwrap();
-        assert!(!hidden_picker_rule_matches_route(&keep_med, &api_key, Some("medium")));
-        assert!(hidden_picker_rule_matches_route(&keep_med, &api_key, Some("low")));
-        assert!(hidden_picker_rule_matches_route(&keep_med, &api_key, Some("max")));
-        assert!(!hidden_picker_rule_matches_route(&keep_med, &oauth, Some("low")));
+        assert!(!hidden_picker_rule_matches_route(
+            &keep_med,
+            &api_key,
+            Some("medium")
+        ));
+        assert!(hidden_picker_rule_matches_route(
+            &keep_med,
+            &api_key,
+            Some("low")
+        ));
+        assert!(hidden_picker_rule_matches_route(
+            &keep_med,
+            &api_key,
+            Some("max")
+        ));
+        assert!(!hidden_picker_rule_matches_route(
+            &keep_med,
+            &oauth,
+            Some("low")
+        ));
         // Negated rules must also spare the plain route row (the kept row's host).
         assert!(!hidden_picker_rule_matches_route(&keep_med, &api_key, None));
 

@@ -10,9 +10,8 @@ use super::{
     build_openrouter_fallback_provider_route, configured_standard_openrouter_profile_routes,
     copilot, dedupe_model_routes, direct_openai_compatible_profile_routes,
     format_account_model_availability_detail, is_listable_model_name, known_anthropic_model_ids,
-    known_openai_model_ids, model_availability_for_account,
-    openrouter, openrouter_catalog_model_id, provider_for_model,
-    standard_openrouter_profile_configured,
+    known_openai_model_ids, model_availability_for_account, openrouter,
+    openrouter_catalog_model_id, provider_for_model, standard_openrouter_profile_configured,
 };
 
 /// Build the fast local route snapshot used by the TUI model picker while the
@@ -259,9 +258,9 @@ fn filter_hidden_picker_routes(
     routes.retain(|route| {
         let model = route.model.trim().to_ascii_lowercase();
         model == active_model
-            || !hidden
-                .iter()
-                .any(|rule| jcode_provider_core::hidden_picker_rule_matches_route(rule, route, None))
+            || !hidden.iter().any(|rule| {
+                jcode_provider_core::hidden_picker_rule_matches_route(rule, route, None)
+            })
     });
 }
 
