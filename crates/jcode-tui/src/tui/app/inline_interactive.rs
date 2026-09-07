@@ -1497,6 +1497,12 @@ impl App {
         };
         let current_api_method = self.current_route_api_method();
         let config = crate::config::config();
+        // `[provider] model_picker_hidden` rules with an effort dimension can
+        // only be applied here: route-level filtering (jcode-base) runs before
+        // the effort expansion below, so it drops whole routes; effort-scoped
+        // rules drop individual expanded rows.
+        let hidden_rules: Vec<jcode_provider_core::HiddenPickerRule> =
+            crate::provider::hidden_picker_rules();
         let config_default_model = config.provider.default_model.clone();
         let config_default_provider = config.provider.default_provider.clone();
         let config_anthropic_effort = config.provider.anthropic_reasoning_effort.clone();
@@ -1724,6 +1730,21 @@ impl App {
                                 &current_provider,
                                 current_api_method.as_deref(),
                             );
+                        // Hidden effort rows never appear; the current
+                        // selection is exempt so it can never disappear.
+                        if !is_this_current
+                            && hidden_rules.iter().any(|rule| {
+                                jcode_provider_core::hidden_picker_rule_matches(
+                                    rule,
+                                    name,
+                                    &route.provider,
+                                    &route.api_method,
+                                    Some(effort),
+                                )
+                            })
+                        {
+                            continue;
+                        }
                         entries.push(PickerEntry {
                             name: display_name.clone(),
                             options: vec![route.clone()],

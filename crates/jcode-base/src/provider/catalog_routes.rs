@@ -210,26 +210,47 @@ struct OpenRouterRouteStats {
     scheduled_endpoint_refreshes: usize,
 }
 
-/// Normalized model ids from `[provider] model_picker_hidden` (lowercased,
-/// trimmed, empties dropped). Empty when unset.
-fn hidden_picker_model_ids() -> Vec<String> {
-    crate::config::config()
-        .provider
-        .model_picker_hidden
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|id| id.trim().to_ascii_lowercase())
-        .filter(|id| !id.is_empty())
-        .collect()
+/// Normalized `[provider] model_picker_hidden` entries as hidden-picker rules.
+/// Bare ids keep the original model-id-only behavior; `lane:model[:effort]`
+/// entries prune per API method / effort row. Configured openai-compatible
+/// profile ids are supplied as known lanes so `kimi:k3` parses unambiguously
+/// while ollama-style `model:tag` ids stay bare model ids.
+pub fn hidden_picker_rules() -> Vec<jcode_provider_core::HiddenPickerRule> {
+    let config = crate::config::config();
+    let mut configured_lanes: Vec<String> = config
+        .providers
+        .keys()
+        .map(|id| jcode_provider_core::normalize_hidden_picker_lane(id))
+        .collect();
+    // Built-in openai-compatible profiles (kimi, zai, ...) never appear in
+    // `[providers.*]`, so their ids must be known lanes too.
+    configured_lanes.extend(
+        jcode_provider_metadata::openai_compatible_profiles()
+            .iter()
+            .map(|profile| jcode_provider_core::normalize_hidden_picker_lane(profile.id)),
+    );
+    configured_lanes.sort();
+    configured_lanes.dedup();
+    jcode_provider_core::parse_hidden_picker_rules(
+        config
+            .provider
+            .model_picker_hidden
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| entry.as_str()),
+        &configured_lanes,
+    )
 }
 
-/// Drop routes whose model id appears in `hidden` (already lowercased/trimmed),
-/// keeping the active model's routes unconditionally so the current selection
-/// never disappears from the picker. No-op when `hidden` is empty.
+/// Drop routes selected by hidden-picker rules, keeping the active model's
+/// routes unconditionally so the current selection never disappears from the
+/// picker. Route-level filtering cannot see the effort dimension (picker rows
+/// expand later in the TUI), so effort-scoped rules are applied there.
+/// No-op when no rules are configured.
 fn filter_hidden_picker_routes(
     routes: &mut Vec<ModelRoute>,
-    hidden: &[String],
+    hidden: &[jcode_provider_core::HiddenPickerRule],
     active_model: &str,
 ) {
     if hidden.is_empty() {
@@ -237,7 +258,10 @@ fn filter_hidden_picker_routes(
     }
     routes.retain(|route| {
         let model = route.model.trim().to_ascii_lowercase();
-        model == active_model || !hidden.iter().any(|id| id == &model)
+        model == active_model
+            || !hidden
+                .iter()
+                .any(|rule| jcode_provider_core::hidden_picker_rule_matches_route(rule, route, None))
     });
 }
 
@@ -313,12 +337,12 @@ pub(super) fn multiprovider_model_routes(provider: &MultiProvider) -> Vec<ModelR
     // flooded with hundreds of unusable entries.
     routes.retain(|route| is_listable_model_name(&route.model));
 
-    // Apply `[provider] model_picker_hidden`: drop routes for model ids the
-    // user pruned from the picker. The active model's routes always survive so
-    // the current selection never disappears (same invariant as the provider
-    // allowlist filter).
+    // Apply `[provider] model_picker_hidden`: drop routes for model ids (or
+    // lane-scoped entries) the user pruned from the picker. The active model's
+    // routes always survive so the current selection never disappears (same
+    // invariant as the provider allowlist filter).
     let active_model = provider.model().trim().to_ascii_lowercase();
-    filter_hidden_picker_routes(&mut routes, &hidden_picker_model_ids(), &active_model);
+    filter_hidden_picker_routes(&mut routes, &hidden_picker_rules(), &active_model);
 
     let mut routes = dedupe_model_routes(routes);
 
@@ -1498,10 +1522,11 @@ mod tests {
             detail: String::new(),
             cheapness: None,
         };
-        let hidden: Vec<String> = ["k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"]
-            .iter()
-            .map(|id| id.to_ascii_lowercase())
-            .collect();
+        let hidden: Vec<jcode_provider_core::HiddenPickerRule> =
+            jcode_provider_core::parse_hidden_picker_rules(
+                ["k3-256k", "kimi-for-coding", "kimi-for-coding-highspeed"],
+                &["kimi".to_string()],
+            );
 
         // Case-insensitive match; the active model is exempted so the current
         // selection never disappears from the picker.
@@ -1519,6 +1544,41 @@ mod tests {
         let mut routes = vec![route("k3"), route("k3-256k")];
         filter_hidden_picker_routes(&mut routes, &[], "k3");
         assert_eq!(routes.len(), 2);
+    }
+
+    #[test]
+    fn lane_scoped_hidden_rules_drop_only_that_lane() {
+        let route = |model: &str, provider: &str, api_method: &str| ModelRoute {
+            model: model.to_string(),
+            provider: provider.to_string(),
+            api_method: api_method.to_string(),
+            available: true,
+            detail: String::new(),
+            cheapness: None,
+        };
+        let hidden = jcode_provider_core::parse_hidden_picker_rules(
+            ["openai-api-key:gpt-5.6-luna", "gpt-reserve"],
+            &[],
+        );
+        let mut routes = vec![
+            route("gpt-5.6-luna", "OpenAI", "openai-api-key"),
+            route("gpt-5.6-luna", "OpenAI", "openai-oauth"),
+            route("gpt-reserve", "OpenAI", "openai-api-key"),
+            route("gpt-reserve", "OpenAI", "openai-oauth"),
+            route("gpt-6-astra", "OpenAI", "openai-api-key"),
+        ];
+        filter_hidden_picker_routes(&mut routes, &hidden, "qwen3.8-flash");
+        let kept: Vec<(&str, &str)> = routes
+            .iter()
+            .map(|r| (r.model.as_str(), r.api_method.as_str()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("gpt-5.6-luna", "openai-oauth"),
+                ("gpt-6-astra", "openai-api-key"),
+            ]
+        );
     }
 
     #[test]
