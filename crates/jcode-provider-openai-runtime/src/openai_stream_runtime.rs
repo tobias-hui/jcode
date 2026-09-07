@@ -110,6 +110,10 @@ pub(super) async fn stream_response(
         .header("Authorization", format!("Bearer {}", access_token))
         .header("Content-Type", "application/json");
 
+    // OpenCode-hosted Responses endpoints (free-tier Muse Spark) require a
+    // per-conversation session header; no-op for api.openai.com (#1167).
+    builder = OpenAIProvider::apply_opencode_session_header(builder, &url);
+
     if is_chatgpt_mode {
         builder = builder.header("originator", ORIGINATOR);
         if let Some(account_id) = account_id.as_ref() {

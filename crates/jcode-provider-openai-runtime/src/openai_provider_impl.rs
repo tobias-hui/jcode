@@ -1159,6 +1159,8 @@ impl Provider for OpenAIProvider {
             .header("Authorization", format!("Bearer {}", access_token))
             .header("Content-Type", "application/json");
 
+        builder = Self::apply_opencode_session_header(builder, &url);
+
         if is_chatgpt_mode {
             builder = builder.header("originator", ORIGINATOR);
             if let Some(account_id) = account_id.as_ref() {

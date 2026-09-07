@@ -42,6 +42,22 @@ const CHATGPT_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 const RESPONSES_PATH: &str = "responses";
 const DEFAULT_MODEL: &str = jcode_provider_core::DEFAULT_OPENAI_MODEL;
 const ORIGINATOR: &str = "codex_cli_rs";
+/// Header OpenCode requires on every inference request (issue #1167). Its
+/// free-tier models are gated behind this per-conversation id; the
+/// chat-completions runtime already sends it, the Responses runtime must too
+/// so `JCODE_OPENAI_API_BASE=https://opencode.ai/zen/v1` works end to end.
+pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+
+/// Stable per-process conversation id used as the `x-opencode-session` value.
+/// OpenCode only requires a stable, unique-per-conversation string, so a
+/// pid+nanotime pair is enough (and keeps the runtime free of a uuid dep).
+pub(crate) static OPENCODE_CONVERSATION_ID: LazyLock<String> = LazyLock::new(|| {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("jcode-{}-{}", std::process::id(), nanos)
+});
 
 pub(crate) const CHATGPT_WEB_MODEL: &str = jcode_provider_core::CHATGPT_WEB_MODEL;
 
@@ -1168,6 +1184,35 @@ impl OpenAIProvider {
             Self::resolve_api_base()
         };
         format!("{}/{}", base.trim_end_matches('/'), RESPONSES_PATH)
+    }
+
+    /// True when an absolute URL points at opencode.ai (OpenCode Zen/Go).
+    /// OpenCode gates its free-tier models behind a per-conversation
+    /// `x-opencode-session` header (issue #1167 added it to the
+    /// chat-completions runtime; the Responses runtime needs the same).
+    pub(crate) fn url_is_opencode_host(url: &str) -> bool {
+        let Ok(parsed) = reqwest::Url::parse(url) else {
+            return false;
+        };
+        matches!(
+            parsed.host_str(),
+            Some(host) if host == "opencode.ai" || host.ends_with(".opencode.ai")
+        )
+    }
+
+    /// Adds the `x-opencode-session` header when a Responses request targets
+    /// OpenCode's endpoint, no-op for every other base URL. The header value
+    /// only needs to be a stable per-conversation id (any string works);
+    /// OpenCode rejects free-tier requests without it.
+    pub(crate) fn apply_opencode_session_header(
+        builder: reqwest::RequestBuilder,
+        url: &str,
+    ) -> reqwest::RequestBuilder {
+        if Self::url_is_opencode_host(url) {
+            builder.header(OPENCODE_SESSION_HEADER, OPENCODE_CONVERSATION_ID.as_str())
+        } else {
+            builder
+        }
     }
 
     /// Resolve the OpenAI Responses API base URL for **API-key** mode.

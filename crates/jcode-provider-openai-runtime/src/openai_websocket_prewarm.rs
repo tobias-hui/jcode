@@ -15,7 +15,9 @@ pub(super) fn websocket_request(
     credentials: &CodexCredentials,
     access_token: &str,
 ) -> Result<Request<()>> {
-    let mut request = OpenAIProvider::responses_ws_url(credentials).into_client_request()?;
+    let ws_url = OpenAIProvider::responses_ws_url(credentials);
+    let needs_opencode_header = OpenAIProvider::url_is_opencode_host(&ws_url);
+    let mut request = ws_url.into_client_request()?;
     let headers = request.headers_mut();
     headers.insert(
         "Authorization",
@@ -23,6 +25,12 @@ pub(super) fn websocket_request(
     );
     headers.insert("Content-Type", HeaderValue::from_static("application/json"));
     headers.insert("OpenAI-Beta", HeaderValue::from_static(WEBSOCKET_V2_BETA));
+    if needs_opencode_header {
+        headers.insert(
+            OPENCODE_SESSION_HEADER,
+            HeaderValue::from_str(OPENCODE_CONVERSATION_ID.as_str())?,
+        );
+    }
     if OpenAIProvider::is_chatgpt_mode(credentials) {
         headers.insert("originator", HeaderValue::from_static(ORIGINATOR));
         if let Some(account_id) = credentials.account_id.as_ref() {
