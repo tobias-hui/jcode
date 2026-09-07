@@ -1250,12 +1250,17 @@ pub struct ProviderConfig {
     /// "openai-compatible:myprofile", ...), or openai-compatible profile ids
     /// ("myprofile"). The active model's routes always stay visible.
     pub model_picker_providers: Option<Vec<String>>,
-    /// Hide specific models from the /model picker (model-id matching,
-    /// case-insensitive). Entries are bare model ids such as
-    /// "kimi-for-coding-highspeed". The active model's routes always stay
-    /// visible so the current selection never disappears. Use this to prune
-    /// unusable variants a provider catalog still advertises; provider-level
-    /// filtering belongs to `model_picker_providers`.
+    /// Hide specific models from the /model picker (case-insensitive).
+    /// Grammar: `model`, `lane:model`, or `lane:model:effort[,effort...]`
+    /// with an optional `!` before the effort list to invert it (keep only
+    /// those rows). Lane = dual-auth api method (`openai-api-key`,
+    /// `openai-oauth`, `claude-oauth`, `anthropic-api-key`), `openrouter`,
+    /// or a configured openai-compatible profile id (`kimi`, `qwencloud`).
+    /// Bare ids keep the original model-id-only behavior. The active model's
+    /// routes always stay visible so the current selection never disappears.
+    /// Use this to prune unusable variants a provider catalog still
+    /// advertises; provider-level filtering belongs to
+    /// `model_picker_providers`.
     #[serde(default, alias = "model-picker-hidden", alias = "hidden_models")]
     pub model_picker_hidden: Option<Vec<String>>,
     /// Max seconds to wait for streaming data before timing out a request with

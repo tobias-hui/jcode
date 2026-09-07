@@ -391,7 +391,14 @@ cross_provider_failover = "countdown"
 # model_picker_providers = ["myprofile", "openrouter"]
 # Hide specific model ids from the /model picker (case-insensitive model-id
 # match; the active model always stays visible). Use for unusable variants a
-# provider catalog still advertises.
+# provider catalog still advertises. Entries can be scoped to one API lane or
+# effort row: "lane:model" (lane = openai-api-key, openai-oauth, claude-oauth,
+# openrouter, or a configured profile id like kimi), and "lane:model:!med"
+# keeps only the listed effort rows (`!` = hide everything except these;
+# without `!` = hide exactly these). Example: keep only the ChatGPT-subscription
+# Luna row and only the API-key Astra row:
+#   ["openai-api-key:gpt-5.6-luna", "openai-oauth:gpt-6-astra",
+#    "openai-oauth:gpt-5.6-luna:!med", "openai-api-key:gpt-6-astra:!med"]
 # model_picker_hidden = ["k3-256k", "kimi-for-coding"]
 # Max seconds to wait for streaming data before timing out a request with no
 # data received. Raise this for slow reasoning models (e.g. DeepSeek) that think

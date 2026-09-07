@@ -48,7 +48,9 @@ pub use models::{
 };
 pub use reasoning::{
     DEEPSEEK_SELECTABLE_EFFORTS, OPENAI_SELECTABLE_EFFORTS, OPENROUTER_SELECTABLE_EFFORTS,
-    canonical_reasoning_effort, inferred_reasoning_efforts,
+    HiddenPickerRule, canonical_reasoning_effort, hidden_picker_rule_matches,
+    hidden_picker_rule_matches_route, inferred_reasoning_efforts,
+    normalize_hidden_picker_lane, parse_hidden_picker_rule, parse_hidden_picker_rules,
 };
 pub use selection::{
     ActiveProvider, ProviderAvailability, auto_default_provider, cli_provider_arg_for_session_key,
