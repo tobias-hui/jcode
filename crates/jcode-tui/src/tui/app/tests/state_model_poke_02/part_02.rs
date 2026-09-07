@@ -211,6 +211,85 @@ fn test_model_autocomplete_completes_unique_provider_match() {
 }
 
 #[test]
+fn test_model_picker_effort_rows_pruned_by_config_hidden_rules() {
+    // End-to-end through the real picker build path: the shipped config
+    // grammar (bare ids, lane-scoped rules, and `!med` keep-only lists) is
+    // written to config.toml, and the effort-expanded rows that survive in
+    // the open picker must match Kai's pruned target set exactly.
+    with_temp_jcode_home(|| {
+        let home = std::env::var_os("JCODE_HOME").expect("temp JCODE_HOME");
+        std::fs::write(
+            std::path::Path::new(&home).join("config.toml"),
+            r#"[provider]
+model_picker_hidden = [
+    "gpt-reserve",
+    "openai-api-key:gpt-5.6-luna",
+    "openai-oauth:gpt-6-astra",
+    "openai-oauth:gpt-5.6-luna:!med",
+    "openai-api-key:gpt-6-astra:!med",
+]
+"#,
+        )
+        .expect("write config.toml");
+        crate::config::invalidate_config_cache();
+
+        let route = |model: &str, api_method: &str| crate::provider::ModelRoute {
+            model: model.to_string(),
+            provider: "OpenAI".to_string(),
+            api_method: api_method.to_string(),
+            available: true,
+            detail: String::new(),
+            cheapness: None,
+        };
+        let mut app = create_test_app();
+        app.is_remote = true;
+        app.remote_provider_model = Some("qwen3.8-flash".to_string());
+        app.remote_provider_name = Some("qwencloud".to_string());
+        app.remote_model_options = vec![
+            route("gpt-5.6-luna", "openai-oauth"),
+            route("gpt-5.6-luna", "openai-api-key"),
+            route("gpt-6-astra", "openai-oauth"),
+            route("gpt-6-astra", "openai-api-key"),
+            route("gpt-reserve", "openai-oauth"),
+            route("gpt-reserve", "openai-api-key"),
+        ];
+
+        app.open_model_picker();
+
+        let picker = app
+            .inline_interactive_state
+            .as_ref()
+            .expect("model picker should be open");
+        let visible: Vec<(&str, &str)> = picker
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.name.as_str(),
+                    entry
+                        .options
+                        .first()
+                        .map(|option| option.api_method.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect();
+
+        // Only the two kept rows survive: Luna (med) on the subscription lane
+        // and Astra (med) on the metered lane. Every other effort row, the
+        // cross-lane duplicates, and gpt-reserve are pruned.
+        assert_eq!(
+            visible,
+            vec![
+                ("gpt-5.6-luna (med)", "openai-oauth"),
+                ("gpt-6-astra (med)", "openai-api-key"),
+            ],
+            "unexpected picker rows: {visible:?}"
+        );
+    });
+}
+
+#[test]
 fn test_model_picker_preview_stays_open_and_updates_filter() {
     let mut app = create_test_app();
     configure_test_remote_models(&mut app);
