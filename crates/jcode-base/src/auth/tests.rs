@@ -958,6 +958,59 @@ fn browser_suppressed_inside_test_harness_without_env_overrides() {
     );
 }
 
+/// The `open` tool gate must keep honoring NO_BROWSER/JCODE_NO_BROWSER and the
+/// test harness, and the opener probe must only report unusable on a *certain*
+/// failure: Linux with neither a display server nor `xdg-open` on PATH.
+#[test]
+fn opener_suppressed_honors_env_vars_and_missing_opener() {
+    assert!(
+        super::opener_suppressed(true),
+        "--no-browser always suppresses"
+    );
+
+    let prev = std::env::var_os("JCODE_NO_BROWSER");
+    crate::env::set_var("JCODE_NO_BROWSER", "1");
+    assert!(
+        super::opener_suppressed(false),
+        "JCODE_NO_BROWSER must suppress the opener too"
+    );
+    restore_env_var("JCODE_NO_BROWSER", prev);
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let saved: Vec<(&str, Option<OsString>)> = ["DISPLAY", "WAYLAND_DISPLAY"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        for key in ["DISPLAY", "WAYLAND_DISPLAY"] {
+            crate::env::remove_var(key);
+        }
+        // Drive command_exists("xdg-open") to false through the per-process
+        // cache instead of mutating PATH (which would leak into parallel
+        // tests). This cache entry is the only way anything in a test binary
+        // reaches xdg-open through command_exists; drop it again after.
+        COMMAND_EXISTS_CACHE
+            .lock()
+            .unwrap()
+            .insert("xdg-open".to_string(), false);
+        assert!(
+            super::system_opener_unusable(),
+            "no display server and no xdg-open must count as unusable"
+        );
+        // A display server alone flips it back to usable without consulting
+        // the opener probe again.
+        crate::env::set_var("DISPLAY", ":0");
+        assert!(
+            !super::system_opener_unusable(),
+            "a display server makes the opener usable without more probing"
+        );
+        COMMAND_EXISTS_CACHE.lock().unwrap().remove("xdg-open");
+        for (key, value) in saved {
+            restore_env_var(key, value);
+        }
+    }
+}
+
 /// Antigravity/Gemini access tokens live about an hour and are refreshed
 /// transparently on the next request. Reporting `Expired` just because the
 /// cached access token aged out made a fully working provider render as broken

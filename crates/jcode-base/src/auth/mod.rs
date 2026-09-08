@@ -117,6 +117,46 @@ pub fn browser_suppressed(cli_no_browser: bool) -> bool {
         || browser_unusable_here()
 }
 
+/// True when opening a file/URL through the system opener has nowhere to go.
+///
+/// This is deliberately *not* [`browser_suppressed`]: that predicate is built
+/// for interactive OAuth login flows and treats a missing TTY as fatal, but a
+/// detached opener (`open` on macOS, `xdg-open` on Linux) never needs a TTY.
+/// Tool execution lives in the `jcode serve` daemon, whose stdio is detached,
+/// so reusing the auth predicate suppressed every `open` tool call on a fully
+/// functional desktop.
+///
+/// Conservative by design, matching `env_facts::probe_browser`: only a
+/// *certain* failure suppresses — Linux with neither a display server nor
+/// `xdg-open`. A display without `xdg-open`, or leaked DISPLAY vars over
+/// SSH-without-X11, stay optimistic: the open is attempted and its real error
+/// is reported. `BROWSER` is not an usability signal here; it is the browser
+/// hint, while the opener path uses the desktop default handler.
+pub fn system_opener_unusable() -> bool {
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        false
+    }
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "windows"))))]
+    {
+        let has_session =
+            std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
+        !has_session && !command_exists("xdg-open")
+    }
+}
+
+/// Full gate for the `open` tool / TUI file-or-URL opening: explicit opt-out
+/// env vars and test binaries always suppress; otherwise only a machine where
+/// the system opener provably has nowhere to go does (see
+/// [`system_opener_unusable`] for why the auth-flow predicate does not apply).
+pub fn opener_suppressed(cli_no_browser: bool) -> bool {
+    cli_no_browser
+        || env_truthy("NO_BROWSER")
+        || env_truthy("JCODE_NO_BROWSER")
+        || running_in_test_harness()
+        || system_opener_unusable()
+}
+
 /// True when the probed environment says a browser launch cannot work.
 ///
 /// Without this, jcode would open a browser that does not exist (or that opens

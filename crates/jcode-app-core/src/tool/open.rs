@@ -345,9 +345,9 @@ async fn open_target(target: &ResolvedTarget) -> Result<String> {
     // Never open real windows from test binaries, and honor
     // NO_BROWSER/JCODE_NO_BROWSER. Without this, agent-loop tests that
     // exercise the open tool pop browsers/viewers on the developer's desktop.
-    if crate::auth::browser_suppressed(false) {
+    if crate::auth::opener_suppressed(false) {
         anyhow::bail!(
-            "opening files/URLs is suppressed (NO_BROWSER/JCODE_NO_BROWSER or test harness)"
+            "opening files/URLs is suppressed (NO_BROWSER/JCODE_NO_BROWSER, test harness, or no usable system opener)"
         );
     }
 
@@ -388,9 +388,9 @@ async fn open_target(target: &ResolvedTarget) -> Result<String> {
 
 async fn reveal_target(path: &Path, kind: LocalTargetKind) -> Result<(String, bool)> {
     // Same suppression as open_target: no real windows from tests/NO_BROWSER.
-    if crate::auth::browser_suppressed(false) {
+    if crate::auth::opener_suppressed(false) {
         anyhow::bail!(
-            "revealing files is suppressed (NO_BROWSER/JCODE_NO_BROWSER or test harness)"
+            "revealing files is suppressed (NO_BROWSER/JCODE_NO_BROWSER, test harness, or no usable system opener)"
         );
     }
 

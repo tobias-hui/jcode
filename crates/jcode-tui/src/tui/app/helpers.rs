@@ -119,9 +119,10 @@ pub(crate) fn invalidate_ambient_info_cache() {
 ///
 /// Every TUI-initiated `open::that_detached` must go through here: it honors
 /// NO_BROWSER/JCODE_NO_BROWSER and refuses to open anything from test binaries
-/// (`browser_suppressed` detects the test harness), so `cargo test` runs never
+/// (`opener_suppressed` detects the test harness), so `cargo test` runs never
 /// pop browser windows, image viewers, or OAuth pages on the developer's
-/// desktop.
+/// desktop. The auth-flow `browser_suppressed` is deliberately not used here:
+/// opening a file needs no TTY.
 pub(crate) fn open_path_or_url_detached(
     target: impl AsRef<std::ffi::OsStr>,
 ) -> std::io::Result<()> {
@@ -133,9 +134,9 @@ pub(crate) fn open_path_or_url_detached(
             ));
         }
     }
-    if crate::auth::browser_suppressed(false) {
+    if crate::auth::opener_suppressed(false) {
         return Err(std::io::Error::other(
-            "opening files/URLs is suppressed (NO_BROWSER/JCODE_NO_BROWSER or test harness)",
+            "opening files/URLs is suppressed (NO_BROWSER/JCODE_NO_BROWSER, test harness, or no usable system opener)",
         ));
     }
     open::that_detached(target)
