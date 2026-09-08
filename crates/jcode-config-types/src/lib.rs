@@ -423,6 +423,29 @@ pub enum NamedProviderAuth {
     None,
 }
 
+/// Wire API a named OpenAI-compatible endpoint speaks.
+///
+/// The default serves the OpenAI chat/completions API through the
+/// OpenRouter-family runtime. `Responses` routes the profile through the
+/// native OpenAI Responses runtime instead, for endpoints that only serve
+/// the Responses API (e.g. OpenCode Zen's muse-spark models, which reject
+/// chat/completions requests). Mirrors codex's `wire_api = "responses"`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum NamedProviderWireApi {
+    #[default]
+    #[serde(alias = "chat", alias = "chat_completions")]
+    ChatCompletions,
+    #[serde(alias = "openai-responses")]
+    Responses,
+}
+
+impl NamedProviderWireApi {
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::ChatCompletions)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct NamedProviderModelConfig {
@@ -459,6 +482,15 @@ pub struct NamedProviderConfig {
     pub provider_type: NamedProviderType,
     pub base_url: String,
     pub api: Option<String>,
+    /// Wire API the endpoint speaks. Defaults to chat/completions; set
+    /// `wire_api = "responses"` for endpoints that only serve the OpenAI
+    /// Responses API.
+    #[serde(
+        default,
+        alias = "wire-api",
+        skip_serializing_if = "NamedProviderWireApi::is_default"
+    )]
+    pub wire_api: NamedProviderWireApi,
     pub auth: NamedProviderAuth,
     pub auth_header: Option<String>,
     /// Extra HTTP headers sent with every request to this provider.
@@ -508,6 +540,7 @@ impl Default for NamedProviderConfig {
             provider_type: NamedProviderType::OpenAiCompatible,
             base_url: String::new(),
             api: None,
+            wire_api: NamedProviderWireApi::ChatCompletions,
             auth: NamedProviderAuth::Bearer,
             auth_header: None,
             headers: std::collections::BTreeMap::new(),

@@ -228,18 +228,38 @@ impl MultiProvider {
             let named_profile = std::env::var("JCODE_NAMED_PROVIDER_PROFILE")
                 .ok()
                 .or_else(|| default_named_provider_profile.clone());
-            let spec = named_profile
-                .as_deref()
-                .and_then(|profile_name| {
-                    cfg.providers.get(profile_name).map(|profile| {
-                        external::OpenRouterRuntimeSpec::NamedProfile {
+            let named_profile_pair = named_profile.as_deref().and_then(|profile_name| {
+                cfg.providers
+                    .get(profile_name)
+                    .map(|profile| (profile_name, profile))
+            });
+            let initialized = if let Some((profile_name, profile)) =
+                named_profile_pair.filter(|(_, profile)| {
+                    matches!(
+                        profile.wire_api,
+                        crate::config::NamedProviderWireApi::Responses
+                    )
+                }) {
+                // Responses-only endpoints use the native OpenAI Responses
+                // runtime, not the chat/completions OpenRouter-family runtime.
+                external::instantiate_openai_responses_profile_runtime(
+                    external::OpenAiResponsesProfileSpec {
+                        name: profile_name.to_string(),
+                        config: profile.clone(),
+                    },
+                )
+            } else {
+                let spec = named_profile_pair
+                    .map(
+                        |(profile_name, profile)| external::OpenRouterRuntimeSpec::NamedProfile {
                             name: profile_name.to_string(),
                             config: profile.clone(),
-                        }
-                    })
-                })
-                .unwrap_or(external::OpenRouterRuntimeSpec::Default);
-            match external::instantiate_openrouter_runtime(spec) {
+                        },
+                    )
+                    .unwrap_or(external::OpenRouterRuntimeSpec::Default);
+                external::instantiate_openrouter_runtime(spec)
+            };
+            match initialized {
                 Ok(p) => Some(p),
                 Err(e) => {
                     crate::logging::info(&format!("Failed to initialize OpenRouter: {}", e));

@@ -1646,12 +1646,27 @@ async fn init_provider_with_options(
                 let profile = cfg.providers.get(&profile_name).ok_or_else(|| {
                     anyhow::anyhow!("Unknown provider profile '{}'", profile_name)
                 })?;
-                Arc::new(
-                    jcode_provider_openrouter_runtime::OpenRouterProvider::new_named_openai_compatible(
-                        &profile_name,
-                        profile,
-                    )?,
-                )
+                if matches!(
+                    profile.wire_api,
+                    crate::config::NamedProviderWireApi::Responses
+                ) {
+                    // Responses-only endpoints (e.g. OpenCode Zen's muse-spark
+                    // models) must run through the native OpenAI Responses
+                    // runtime, not the chat/completions OpenRouter runtime.
+                    Arc::new(
+                        jcode_provider_openai_runtime::OpenAIProvider::new_for_profile(
+                            &profile_name,
+                            profile,
+                        )?,
+                    )
+                } else {
+                    Arc::new(
+                        jcode_provider_openrouter_runtime::OpenRouterProvider::new_named_openai_compatible(
+                            &profile_name,
+                            profile,
+                        )?,
+                    )
+                }
             } else {
                 Arc::new(jcode_provider_openrouter_runtime::OpenRouterProvider::new()?)
             }

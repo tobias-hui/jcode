@@ -715,6 +715,47 @@ fn spawn_persistent_ws_keepalive_with_interval(
     })
 }
 
+/// Profile state for a named `[providers.<name>]` config entry with
+/// `wire_api = "responses"`. Pins this runtime instance to the profile's own
+/// base URL and API key instead of the shared OpenAI credential and
+/// `resolve_api_base()` env resolution, so a Responses-only endpoint (e.g.
+/// OpenCode Zen serving muse-spark) can coexist with the main OpenAI lane.
+#[derive(Debug, Clone)]
+pub struct OpenAiResponsesProfile {
+    pub profile_id: String,
+    pub display_name: String,
+    pub api_base: String,
+    pub key_env: Option<String>,
+    pub env_file: Option<String>,
+    pub inline_key: Option<String>,
+    /// Configured model ids (empty = accept any model id).
+    pub models: Vec<String>,
+    /// Lowercased model id -> context window from explicit config.
+    pub context_windows: HashMap<String, usize>,
+    /// Lowercased model id -> image-input support from explicit `input`
+    /// declarations; absent entries are treated as text-only.
+    pub image_input: HashMap<String, bool>,
+}
+
+impl OpenAiResponsesProfile {
+    /// Reload the profile's API key from its configured source (env var,
+    /// env file, or inline config value), mirroring the named-profile key
+    /// resolution of the chat/completions runtime.
+    fn resolve_api_key(&self) -> Option<String> {
+        let from_env = self.key_env.as_deref().and_then(|env_key| {
+            if let Some(env_file) = self.env_file.as_deref() {
+                jcode_base::provider_catalog::load_api_key_from_env_or_config(env_key, env_file)
+            } else {
+                std::env::var(env_key)
+                    .ok()
+                    .map(|key| key.trim().to_string())
+                    .filter(|key| !key.is_empty())
+            }
+        });
+        from_env.or_else(|| self.inline_key.clone())
+    }
+}
+
 pub struct OpenAIProvider {
     client: Client,
     credentials: Arc<RwLock<CodexCredentials>>,
@@ -739,6 +780,8 @@ pub struct OpenAIProvider {
     /// True when this runtime was created without API credentials. It can still
     /// serve browser-backed models and upgrades in place after a successful login.
     browser_only: Arc<AtomicBool>,
+    /// Named Responses profile pin; `None` for the shared OpenAI lane.
+    profile: Option<OpenAiResponsesProfile>,
 }
 
 impl OpenAIProvider {
@@ -755,7 +798,113 @@ impl OpenAIProvider {
     }
 
     pub fn new(credentials: CodexCredentials) -> Self {
-        Self::new_inner(credentials, false)
+        Self::new_inner(credentials, false, None)
+    }
+
+    /// Construct the OpenAI Responses runtime pinned to a named provider
+    /// profile (`[providers.<name>] wire_api = "responses"`). The instance
+    /// uses the profile's base URL and API key, never the shared OpenAI
+    /// credentials or `OPENAI_BASE_URL`-style env overrides.
+    pub fn new_for_profile(
+        profile_name: &str,
+        config: &jcode_base::config::NamedProviderConfig,
+    ) -> Result<Self> {
+        let api_base = config.base_url.trim().trim_end_matches('/');
+        let api_base = api_base
+            .trim_end_matches("/responses")
+            .trim_end_matches('/');
+        if !(api_base.starts_with("http://") || api_base.starts_with("https://")) {
+            anyhow::bail!(
+                "Provider profile '{}' has invalid base_url '{}'; expected an absolute http(s):// URL",
+                profile_name,
+                config.base_url
+            );
+        }
+        let key_env = config
+            .api_key_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let env_file = config
+            .env_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let requires_key = !matches!(config.auth, jcode_base::config::NamedProviderAuth::None)
+            && config.requires_api_key.unwrap_or(true);
+        let profile = OpenAiResponsesProfile {
+            profile_id: profile_name.to_string(),
+            display_name: profile_name.to_string(),
+            api_base: api_base.to_string(),
+            key_env,
+            env_file,
+            inline_key: config.api_key.clone(),
+            models: config
+                .models
+                .iter()
+                .map(|model| model.id.trim().to_string())
+                .filter(|id| !id.is_empty())
+                .collect(),
+            context_windows: config
+                .models
+                .iter()
+                .filter_map(|model| {
+                    let id = model.id.trim();
+                    if id.is_empty() {
+                        return None;
+                    }
+                    model
+                        .context_window
+                        .map(|limit| (id.to_ascii_lowercase(), limit))
+                })
+                .collect(),
+            image_input: config
+                .models
+                .iter()
+                .filter_map(|model| {
+                    let id = model.id.trim();
+                    if id.is_empty() || model.input.is_empty() {
+                        return None;
+                    }
+                    Some((
+                        id.to_ascii_lowercase(),
+                        model.input.iter().any(|i| i.eq_ignore_ascii_case("image")),
+                    ))
+                })
+                .collect(),
+        };
+        let api_key = profile.resolve_api_key().unwrap_or_default();
+        if requires_key && api_key.is_empty() {
+            let label = profile
+                .key_env
+                .clone()
+                .unwrap_or_else(|| "inline api_key".to_string());
+            anyhow::bail!("{} not found in environment", label);
+        }
+        let credentials = CodexCredentials {
+            access_token: api_key,
+            refresh_token: String::new(),
+            id_token: None,
+            account_id: None,
+            expires_at: None,
+        };
+        let default_model = config
+            .default_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| profile.models.first().cloned());
+        let provider = Self::new_inner(credentials, false, Some(profile));
+        if let Some(model) = default_model
+            && let Ok(mut current) = provider.model.try_write()
+        {
+            *current = model;
+        }
+        provider.revalidate_reasoning_effort();
+        Ok(provider)
     }
 
     /// Construct the OpenAI runtime for browser-backed models when no Codex or
@@ -771,16 +920,28 @@ impl OpenAIProvider {
                 expires_at: None,
             },
             true,
+            None,
         )
     }
 
-    fn new_inner(credentials: CodexCredentials, browser_only: bool) -> Self {
-        let credential_mode = if browser_only {
-            OpenAICredentialMode::Auto
+    fn new_inner(
+        credentials: CodexCredentials,
+        browser_only: bool,
+        profile: Option<OpenAiResponsesProfile>,
+    ) -> Self {
+        let credential_mode = if browser_only || profile.is_some() {
+            // Named profiles are pinned to their configured API key; the
+            // shared OAuth/API-key env mode must not reload global
+            // credentials over the profile key.
+            if profile.is_some() {
+                OpenAICredentialMode::ApiKey
+            } else {
+                OpenAICredentialMode::Auto
+            }
         } else {
             OpenAICredentialMode::from_runtime_env(jcode_provider_core::DualAuthProvider::OpenAI)
         };
-        let credentials = if browser_only {
+        let credentials = if browser_only || profile.is_some() {
             credentials
         } else {
             match credential_mode {
@@ -794,13 +955,18 @@ impl OpenAIProvider {
         // Check for model override from environment
         let mut model = if browser_only {
             CHATGPT_WEB_MODEL.to_string()
+        } else if profile.is_some() {
+            // The profile default is applied by new_for_profile after
+            // construction; start from the built-in default untouched.
+            DEFAULT_MODEL.to_string()
         } else {
             std::env::var("JCODE_OPENAI_MODEL")
                 .unwrap_or_else(|_| DEFAULT_MODEL.to_string())
                 .trim()
                 .to_string()
         };
-        if !is_chatgpt_web_model(&model)
+        if profile.is_none()
+            && !is_chatgpt_web_model(&model)
             && !jcode_base::provider::known_openai_model_ids()
                 .iter()
                 .any(|known| known == &model)
@@ -812,14 +978,24 @@ impl OpenAIProvider {
             model = DEFAULT_MODEL.to_string();
         }
 
-        let prompt_cache_key = std::env::var("JCODE_OPENAI_PROMPT_CACHE_KEY")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        let prompt_cache_retention = std::env::var("JCODE_OPENAI_PROMPT_CACHE_RETENTION")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
+        // Profile endpoints must not inherit the shared OpenAI prompt-cache
+        // identity; it is account-specific to the main OpenAI lane.
+        let prompt_cache_key = if profile.is_some() {
+            None
+        } else {
+            std::env::var("JCODE_OPENAI_PROMPT_CACHE_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let prompt_cache_retention = if profile.is_some() {
+            None
+        } else {
+            std::env::var("JCODE_OPENAI_PROMPT_CACHE_RETENTION")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         let prompt_cache_retention = match prompt_cache_retention.as_deref() {
             Some("in_memory") | Some("24h") => prompt_cache_retention,
             Some(other) => {
@@ -881,6 +1057,7 @@ impl OpenAIProvider {
             prewarm: Arc::new(openai_websocket_prewarm::PrewarmSlot::default()),
             chatgpt_web: Arc::new(chatgpt_web::ChatGptWebState::new()),
             browser_only: Arc::new(AtomicBool::new(browser_only)),
+            profile,
         };
         provider.revalidate_reasoning_effort();
         provider
@@ -891,6 +1068,25 @@ impl OpenAIProvider {
     }
 
     pub(crate) fn reload_credentials_now(&self) {
+        if let Some(profile) = &self.profile {
+            // Named profiles only ever reload from their own configured key
+            // source; global OpenAI auth changes must not clobber them.
+            if let Some(key) = profile.resolve_api_key() {
+                match self.credentials.try_write() {
+                    Ok(mut guard) => {
+                        guard.access_token = key;
+                        self.browser_only.store(false, AtomicOrdering::Release);
+                    }
+                    Err(_) => {
+                        jcode_base::logging::info(
+                            "Profile API key was updated on disk, but the in-memory credential lock was busy; async refresh will retry",
+                        );
+                    }
+                }
+            }
+            self.clear_persistent_ws_try("profile credentials reloaded");
+            return;
+        }
         let mode = self
             .credential_mode
             .try_read()
@@ -915,6 +1111,11 @@ impl OpenAIProvider {
     }
 
     pub(crate) fn set_credential_mode(&self, mode: OpenAICredentialMode) -> Result<()> {
+        if self.profile.is_some() {
+            anyhow::bail!(
+                "Named provider profiles are pinned to their configured API key; credential mode cannot be changed"
+            );
+        }
         let credentials = load_credentials_for_mode(mode)?;
         match self.credentials.try_write() {
             Ok(mut guard) => {
@@ -1175,15 +1376,25 @@ impl OpenAIProvider {
         parsed
     }
 
-    fn responses_url(credentials: &CodexCredentials) -> String {
+    fn responses_url(credentials: &CodexCredentials, api_base_override: Option<&str>) -> String {
         let base = if Self::is_chatgpt_mode(credentials) {
             // ChatGPT/Codex OAuth backend is fixed; a custom base only applies
             // to API-key usage of the native Responses API.
             CHATGPT_API_BASE.to_string()
         } else {
-            Self::resolve_api_base()
+            api_base_override
+                .map(str::to_string)
+                .unwrap_or_else(Self::resolve_api_base)
         };
         format!("{}/{}", base.trim_end_matches('/'), RESPONSES_PATH)
+    }
+
+    /// The pinned profile base URL, when this instance serves a named
+    /// Responses profile. `None` on the shared OpenAI lane.
+    pub(crate) fn profile_api_base(&self) -> Option<&str> {
+        self.profile
+            .as_ref()
+            .map(|profile| profile.api_base.as_str())
     }
 
     /// True when an absolute URL points at opencode.ai (OpenCode Zen/Go).
@@ -1230,14 +1441,20 @@ impl OpenAIProvider {
         jcode_base::provider::openai::resolve_api_base()
     }
 
-    fn responses_ws_url(credentials: &CodexCredentials) -> String {
-        let base = Self::responses_url(credentials);
+    fn responses_ws_url(credentials: &CodexCredentials, api_base_override: Option<&str>) -> String {
+        let base = Self::responses_url(credentials, api_base_override);
         base.replace("https://", "wss://")
             .replace("http://", "ws://")
     }
 
-    fn responses_compact_url(credentials: &CodexCredentials) -> String {
-        format!("{}/compact", Self::responses_url(credentials))
+    fn responses_compact_url(
+        credentials: &CodexCredentials,
+        api_base_override: Option<&str>,
+    ) -> String {
+        format!(
+            "{}/compact",
+            Self::responses_url(credentials, api_base_override)
+        )
     }
 
     /// Shared request settings keep speculative warmup and foreground generation

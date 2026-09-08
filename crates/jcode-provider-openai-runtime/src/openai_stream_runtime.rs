@@ -79,6 +79,7 @@ pub(super) async fn stream_response(
     request: Value,
     initial_status_detail: String,
     tx: mpsc::Sender<Result<StreamEvent>>,
+    api_base_override: Option<&str>,
 ) -> Result<(), OpenAIStreamFailure> {
     use jcode_message_types::ConnectionPhase;
     let request_model = openai_request_model(&request);
@@ -101,7 +102,7 @@ pub(super) async fn stream_response(
     let access_token = openai_access_token(&credentials).await?;
     let creds = credentials.read().await;
     let is_chatgpt_mode = !creds.refresh_token.is_empty() || creds.id_token.is_some();
-    let url = OpenAIProvider::responses_url(&creds);
+    let url = OpenAIProvider::responses_url(&creds, api_base_override);
     let account_id = creds.account_id.clone();
     drop(creds);
 
@@ -402,6 +403,7 @@ pub(super) async fn try_persistent_ws_continuation(
     input: &[Value],
     input_item_count: usize,
     tx: &mpsc::Sender<Result<StreamEvent>>,
+    api_base_override: Option<&str>,
 ) -> PersistentWsResult {
     let request_model = openai_request_model(request);
     let mut guard = persistent_ws.lock().await;
@@ -420,7 +422,9 @@ pub(super) async fn try_persistent_ws_continuation(
         }
     };
 
-    if state.identity != openai_websocket_prewarm::prewarm_identity(&*credentials.read().await) {
+    if state.identity
+        != openai_websocket_prewarm::prewarm_identity(&*credentials.read().await, api_base_override)
+    {
         *guard = None;
         log_openai_stream_lifecycle(
             jcode_base::logging::LogLevel::Info,
@@ -776,7 +780,9 @@ pub(super) async fn try_persistent_ws_continuation(
     // change in another fork. Revalidate at the send boundary and keep the
     // read guard until the frame is flushed, not throughout generation.
     let send_credentials = credentials.read().await;
-    if state.identity != openai_websocket_prewarm::prewarm_identity(&send_credentials) {
+    if state.identity
+        != openai_websocket_prewarm::prewarm_identity(&send_credentials, api_base_override)
+    {
         *guard = None;
         return PersistentWsResult::NotAvailable;
     }
@@ -1049,6 +1055,7 @@ pub(super) async fn stream_response_websocket_persistent(
     tx: mpsc::Sender<Result<StreamEvent>>,
     persistent_ws: Arc<Mutex<Option<PersistentWsState>>>,
     input_item_count: usize,
+    api_base_override: Option<&str>,
 ) -> Result<(), OpenAIStreamFailure> {
     use jcode_message_types::ConnectionPhase;
     let request_model = request
@@ -1077,9 +1084,10 @@ pub(super) async fn stream_response_websocket_persistent(
     ));
     emit_status_detail(&tx, "opening websocket").await;
     let creds = credentials.read().await;
-    let ws_request = openai_websocket_prewarm::websocket_request(&creds, &access_token)
-        .map_err(OpenAIStreamFailure::Other)?;
-    let mut identity = openai_websocket_prewarm::prewarm_identity(&creds);
+    let ws_request =
+        openai_websocket_prewarm::websocket_request(&creds, &access_token, api_base_override)
+            .map_err(OpenAIStreamFailure::Other)?;
+    let mut identity = openai_websocket_prewarm::prewarm_identity(&creds, api_base_override);
     identity.0 = access_token;
     drop(creds);
 

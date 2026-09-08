@@ -71,6 +71,56 @@ type Factory = Arc<dyn Fn() -> Option<Arc<dyn Provider>> + Send + Sync>;
 type OpenRouterFactory =
     Arc<dyn Fn(OpenRouterRuntimeSpec) -> anyhow::Result<Arc<dyn Provider>> + Send + Sync>;
 
+/// Construction spec for a named provider profile that speaks the OpenAI
+/// Responses wire API (`[providers.<name>] wire_api = "responses"`). The
+/// profile keeps the public `openai-compatible:<name>` route identity, but
+/// requests run through the native OpenAI Responses runtime with the
+/// profile's own base URL and API key instead of the chat/completions
+/// OpenRouter-family runtime.
+#[derive(Debug, Clone)]
+pub struct OpenAiResponsesProfileSpec {
+    pub name: String,
+    pub config: crate::config::NamedProviderConfig,
+}
+
+type OpenAiResponsesProfileFactory =
+    Arc<dyn Fn(OpenAiResponsesProfileSpec) -> anyhow::Result<Arc<dyn Provider>> + Send + Sync>;
+
+fn openai_responses_profile_factory_slot() -> &'static RwLock<Option<OpenAiResponsesProfileFactory>>
+{
+    static SLOT: OnceLock<RwLock<Option<OpenAiResponsesProfileFactory>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(None))
+}
+
+/// Register the OpenAI Responses profile runtime factory. Like
+/// [`register_openrouter_factory`], the concrete runtime lives in a
+/// downstream crate and is wired here by the composition root.
+pub fn register_openai_responses_profile_factory<F>(factory: F)
+where
+    F: Fn(OpenAiResponsesProfileSpec) -> anyhow::Result<Arc<dyn Provider>> + Send + Sync + 'static,
+{
+    *openai_responses_profile_factory_slot()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::new(factory));
+}
+
+/// Instantiate the OpenAI Responses runtime for a named provider profile.
+pub fn instantiate_openai_responses_profile_runtime(
+    spec: OpenAiResponsesProfileSpec,
+) -> anyhow::Result<Arc<dyn Provider>> {
+    let factory = openai_responses_profile_factory_slot()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    match factory {
+        Some(factory) => factory(spec),
+        None => anyhow::bail!(
+            "no OpenAI Responses profile factory registered; the composition root must call \
+             register_openai_responses_profile_factory() at startup"
+        ),
+    }
+}
+
 fn openrouter_factory_slot() -> &'static RwLock<Option<OpenRouterFactory>> {
     static SLOT: OnceLock<RwLock<Option<OpenRouterFactory>>> = OnceLock::new();
     SLOT.get_or_init(|| RwLock::new(None))

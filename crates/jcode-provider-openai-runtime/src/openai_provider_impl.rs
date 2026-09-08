@@ -76,7 +76,11 @@ impl Provider for OpenAIProvider {
         {
             return;
         }
-        self.prewarm.start(Arc::clone(&self.credentials), &request);
+        self.prewarm.start(
+            Arc::clone(&self.credentials),
+            &request,
+            self.profile_api_base().map(str::to_string),
+        );
     }
 
     async fn complete(
@@ -114,9 +118,11 @@ impl Provider for OpenAIProvider {
             OpenAITransportMode::Auto => Self::should_prefer_websocket(&model_id),
         };
         if use_websocket_transport {
-            let warmed = self
-                .prewarm
-                .take_ready(&request, &*self.credentials.read().await);
+            let warmed = self.prewarm.take_ready(
+                &request,
+                &*self.credentials.read().await,
+                self.profile_api_base(),
+            );
             if let Some(state) = warmed {
                 let mut guard = persistent_ws.lock().await;
                 if guard.is_none() {
@@ -259,6 +265,7 @@ impl Provider for OpenAIProvider {
         let model_for_transport = model_id.clone();
         let client = self.client.clone();
         let panic_tx = tx.clone();
+        let api_base_override = self.profile_api_base().map(str::to_string);
 
         tokio::spawn(async move {
             let stream_task = async move {
@@ -276,6 +283,7 @@ impl Provider for OpenAIProvider {
                         &input,
                         input_item_count,
                         &attempt_tx,
+                        api_base_override.as_deref(),
                     )
                     .await;
                     drop(attempt_tx);
@@ -457,6 +465,7 @@ impl Provider for OpenAIProvider {
                             attempt_tx,
                             Arc::clone(&persistent_ws),
                             input_item_count,
+                            api_base_override.as_deref(),
                         )
                         .await
                     } else {
@@ -496,6 +505,7 @@ impl Provider for OpenAIProvider {
                                 "https".to_string()
                             },
                             attempt_tx,
+                            api_base_override.as_deref(),
                         )
                         .await
                     };
@@ -728,6 +738,26 @@ impl Provider for OpenAIProvider {
         "openai"
     }
 
+    fn display_name(&self) -> String {
+        if let Some(profile) = &self.profile {
+            return profile.display_name.clone();
+        }
+        self.name().to_string()
+    }
+
+    fn direct_openai_compatible_route_parts(&self) -> Option<(String, String, String)> {
+        // Named Responses profiles keep the public openai-compatible:<name>
+        // route identity so routing, the picker, and session restore treat
+        // them like any other named provider profile.
+        self.profile.as_ref().map(|profile| {
+            (
+                profile.display_name.clone(),
+                format!("openai-compatible:{}", profile.profile_id),
+                profile.api_base.clone(),
+            )
+        })
+    }
+
     fn on_auth_changed(&self) {
         self.reload_credentials_now();
     }
@@ -741,11 +771,44 @@ impl Provider for OpenAIProvider {
     }
 
     fn supports_image_input(&self) -> bool {
+        if let Some(profile) = &self.profile {
+            let model = self.model().to_ascii_lowercase();
+            return profile.image_input.get(&model).copied().unwrap_or(false);
+        }
         !is_chatgpt_web_model(&self.model())
     }
 
     fn set_model(&self, model: &str) -> Result<()> {
         let model = model.trim();
+        if let Some(profile) = &self.profile {
+            // Named Responses profiles accept their configured model ids
+            // (or any id when none are configured); the shared OpenAI model
+            // catalog and account-availability state do not apply.
+            if model.is_empty() {
+                anyhow::bail!("Model cannot be empty");
+            }
+            if !profile.models.is_empty() && !profile.models.iter().any(|known| known == model) {
+                anyhow::bail!(
+                    "Unsupported model '{}' for provider profile '{}'. Configured models: {}",
+                    model,
+                    profile.profile_id,
+                    profile.models.join(", ")
+                );
+            }
+            if let Ok(mut current) = self.model.try_write() {
+                let changed = current.as_str() != model;
+                *current = model.to_string();
+                drop(current);
+                if changed {
+                    self.clear_persistent_ws_try("manual model change reset the response chain");
+                    self.revalidate_reasoning_effort();
+                }
+                return Ok(());
+            }
+            return Err(anyhow::anyhow!(
+                "Cannot change model while a request is in progress"
+            ));
+        }
         if self.is_browser_only() && !is_chatgpt_web_model(model) {
             anyhow::bail!(
                 "OpenAI API credentials are not available for '{}'. The browser-only runtime can use '{}'; run `jcode login --provider openai` before selecting API models.",
@@ -818,6 +881,11 @@ impl Provider for OpenAIProvider {
     }
 
     fn available_models(&self) -> Vec<&'static str> {
+        if self.profile.is_some() {
+            // Configured profile models are owned Strings; they are exposed
+            // through available_models_for_switching/display instead.
+            return vec![];
+        }
         if self.is_browser_only() {
             return vec![CHATGPT_WEB_MODEL];
         }
@@ -825,6 +893,9 @@ impl Provider for OpenAIProvider {
     }
 
     fn available_models_for_switching(&self) -> Vec<String> {
+        if let Some(profile) = &self.profile {
+            return profile.models.clone();
+        }
         if self.is_browser_only() {
             return vec![CHATGPT_WEB_MODEL.to_string()];
         }
@@ -850,7 +921,10 @@ impl Provider for OpenAIProvider {
     }
 
     async fn prefetch_models(&self) -> Result<()> {
-        if self.is_browser_only() {
+        if self.is_browser_only() || self.profile.is_some() {
+            // Profile instances must not fetch a catalog with their pinned
+            // key: it would populate the shared OpenAI account scope with a
+            // foreign endpoint's model list.
             return Ok(());
         }
         // The loaded credential's *shape* is authoritative for which catalog
@@ -1123,7 +1197,7 @@ impl Provider for OpenAIProvider {
         let creds = self.credentials.read().await;
         let is_chatgpt_mode = Self::is_chatgpt_mode(&creds);
         let account_id = creds.account_id.clone();
-        let url = Self::responses_compact_url(&creds);
+        let url = Self::responses_compact_url(&creds, self.profile_api_base());
         drop(creds);
 
         let mut input = Vec::new();
@@ -1222,6 +1296,11 @@ impl Provider for OpenAIProvider {
 
     fn context_window(&self) -> usize {
         let model = self.model();
+        if let Some(profile) = &self.profile
+            && let Some(limit) = profile.context_windows.get(&model.to_ascii_lowercase())
+        {
+            return *limit;
+        }
         jcode_provider_core::context_limit_for_model_with_provider(&model, Some(self.name()))
             .unwrap_or(jcode_provider_core::DEFAULT_CONTEXT_LIMIT)
     }
@@ -1256,10 +1335,19 @@ impl Provider for OpenAIProvider {
             prewarm: Arc::new(openai_websocket_prewarm::PrewarmSlot::default()),
             chatgpt_web: Arc::new(chatgpt_web::ChatGptWebState::new()),
             browser_only: Arc::clone(&self.browser_only),
+            profile: self.profile.clone(),
         })
     }
 
     async fn invalidate_credentials(&self) {
+        if let Some(profile) = &self.profile {
+            if let Some(key) = profile.resolve_api_key() {
+                let mut guard = self.credentials.write().await;
+                guard.access_token = key;
+                self.browser_only.store(false, AtomicOrdering::Release);
+            }
+            return;
+        }
         let mode = *self.credential_mode.read().await;
         if let Ok(credentials) = super::load_credentials_for_mode(mode) {
             let mut guard = self.credentials.write().await;

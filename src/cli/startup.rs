@@ -255,6 +255,15 @@ pub fn register_external_provider_runtimes() {
     crate::provider::external::register_profile_catalog_refresh(
         jcode_provider_openrouter_runtime::maybe_schedule_openai_compatible_profile_catalog_refresh,
     );
+    // Named provider profiles with wire_api = "responses" run through the
+    // native OpenAI Responses runtime pinned to the profile's base URL/key.
+    crate::provider::external::register_openai_responses_profile_factory(|spec| {
+        let provider = jcode_provider_openai_runtime::OpenAIProvider::new_for_profile(
+            &spec.name,
+            &spec.config,
+        )?;
+        Ok(std::sync::Arc::new(provider) as std::sync::Arc<dyn crate::provider::Provider>)
+    });
     crate::provider::external::register_standard_openrouter_catalog_refresh(
         jcode_provider_openrouter_runtime::maybe_schedule_standard_openrouter_catalog_refresh,
     );

@@ -365,7 +365,7 @@ fn openai_catalog_and_chat_endpoints_agree_on_credential_shape() {
         "platform API key must not be treated as ChatGPT/Codex mode"
     );
     assert!(
-        OpenAIProvider::responses_url(&api_key_creds).starts_with(OPENAI_API_BASE),
+        OpenAIProvider::responses_url(&api_key_creds, None).starts_with(OPENAI_API_BASE),
         "platform API key chat requests must use the platform API base"
     );
 
@@ -382,7 +382,7 @@ fn openai_catalog_and_chat_endpoints_agree_on_credential_shape() {
         "OAuth session with a refresh token must be treated as ChatGPT/Codex mode"
     );
     assert!(
-        OpenAIProvider::responses_url(&oauth_creds).starts_with(CHATGPT_API_BASE),
+        OpenAIProvider::responses_url(&oauth_creds, None).starts_with(CHATGPT_API_BASE),
         "OAuth chat requests must use the ChatGPT/Codex API base"
     );
 
@@ -420,24 +420,24 @@ fn responses_url_honors_api_base_override_in_api_key_mode() {
 
     // Default base when unset.
     assert_eq!(
-        OpenAIProvider::responses_url(&api_key_creds),
+        OpenAIProvider::responses_url(&api_key_creds, None),
         format!("{}/responses", OPENAI_API_BASE),
     );
 
     // Override is applied (and a trailing slash is tolerated).
     let _override = EnvVarGuard::set("JCODE_OPENAI_API_BASE", "http://127.0.0.1:8317/v1/");
     assert_eq!(
-        OpenAIProvider::responses_url(&api_key_creds),
+        OpenAIProvider::responses_url(&api_key_creds, None),
         "http://127.0.0.1:8317/v1/responses",
     );
     // WS URL derives from the same base.
     assert_eq!(
-        OpenAIProvider::responses_ws_url(&api_key_creds),
+        OpenAIProvider::responses_ws_url(&api_key_creds, None),
         "ws://127.0.0.1:8317/v1/responses",
     );
     // Compact endpoint too.
     assert_eq!(
-        OpenAIProvider::responses_compact_url(&api_key_creds),
+        OpenAIProvider::responses_compact_url(&api_key_creds, None),
         "http://127.0.0.1:8317/v1/responses/compact",
     );
 }
@@ -456,7 +456,7 @@ fn responses_url_ignores_override_in_chatgpt_mode() {
     };
     // ChatGPT/Codex OAuth backend must stay fixed regardless of the override.
     assert!(
-        OpenAIProvider::responses_url(&oauth_creds).starts_with(CHATGPT_API_BASE),
+        OpenAIProvider::responses_url(&oauth_creds, None).starts_with(CHATGPT_API_BASE),
         "ChatGPT/Codex mode must ignore the API base override"
     );
 }

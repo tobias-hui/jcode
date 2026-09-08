@@ -14,8 +14,9 @@ const PREWARM_TTL: Duration = Duration::from_secs(30);
 pub(super) fn websocket_request(
     credentials: &CodexCredentials,
     access_token: &str,
+    api_base_override: Option<&str>,
 ) -> Result<Request<()>> {
-    let ws_url = OpenAIProvider::responses_ws_url(credentials);
+    let ws_url = OpenAIProvider::responses_ws_url(credentials, api_base_override);
     let needs_opencode_header = OpenAIProvider::url_is_opencode_host(&ws_url);
     let mut request = ws_url.into_client_request()?;
     let headers = request.headers_mut();
@@ -68,11 +69,14 @@ struct PrewarmJob {
     task: tokio::task::JoinHandle<()>,
 }
 
-pub(super) fn prewarm_identity(credentials: &CodexCredentials) -> (String, Option<String>, String) {
+pub(super) fn prewarm_identity(
+    credentials: &CodexCredentials,
+    api_base_override: Option<&str>,
+) -> (String, Option<String>, String) {
     (
         credentials.access_token.clone(),
         credentials.account_id.clone(),
-        OpenAIProvider::responses_ws_url(credentials),
+        OpenAIProvider::responses_ws_url(credentials, api_base_override),
     )
 }
 
@@ -104,6 +108,7 @@ impl PrewarmSlot {
         self: &Arc<Self>,
         credentials: Arc<RwLock<CodexCredentials>>,
         request: &Value,
+        api_base_override: Option<String>,
     ) {
         let request = prewarm_request(request);
         let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -132,8 +137,9 @@ impl PrewarmSlot {
                         }),
                     "credentials are not ready for prewarm"
                 );
-                let handshake = websocket_request(&creds, &creds.access_token)?;
-                let identity = prewarm_identity(&creds);
+                let handshake =
+                    websocket_request(&creds, &creds.access_token, api_base_override.as_deref())?;
+                let identity = prewarm_identity(&creds, api_base_override.as_deref());
                 drop(creds);
                 let (socket, _) = connect_async(handshake).await?;
                 warm_socket(socket, &payload, identity).await
@@ -187,6 +193,7 @@ impl PrewarmSlot {
         &self,
         request: &Value,
         credentials: &CodexCredentials,
+        api_base_override: Option<&str>,
     ) -> Option<PersistentWsState> {
         let mut job = self.0.lock().unwrap_or_else(|e| e.into_inner()).take()?;
         let compatible =
@@ -194,7 +201,7 @@ impl PrewarmSlot {
         let state = compatible
             .then(|| job.ready.try_recv().ok())
             .flatten()
-            .filter(|state| state.identity == prewarm_identity(credentials));
+            .filter(|state| state.identity == prewarm_identity(credentials, api_base_override));
         log_openai_stream_lifecycle(
             jcode_base::logging::LogLevel::Info,
             if state.is_some() {
@@ -290,14 +297,14 @@ mod tests {
     #[test]
     fn v2_handshake_preserves_api_key_and_oauth_authentication() {
         let mut creds = credentials();
-        let api = websocket_request(&creds, "test-access").unwrap();
+        let api = websocket_request(&creds, "test-access", None).unwrap();
         assert_eq!(api.headers()["OpenAI-Beta"], WEBSOCKET_V2_BETA);
         assert_eq!(api.headers()["Authorization"], "Bearer test-access");
         assert!(!api.headers().contains_key("originator"));
         assert!(!api.headers().contains_key("chatgpt-account-id"));
         creds.refresh_token = "test-refresh".into();
         creds.account_id = Some("test-account".into());
-        let oauth = websocket_request(&creds, "test-access").unwrap();
+        let oauth = websocket_request(&creds, "test-access", None).unwrap();
         assert_eq!(oauth.headers()["OpenAI-Beta"], WEBSOCKET_V2_BETA);
         assert_eq!(oauth.headers()["Authorization"], "Bearer test-access");
         assert_eq!(oauth.headers()["originator"], ORIGINATOR);
@@ -320,7 +327,7 @@ mod tests {
             ready,
             task,
         });
-        assert!(slot.take_ready(&request, &credentials()).is_none());
+        assert!(slot.take_ready(&request, &credentials(), None).is_none());
         tokio::task::yield_now().await;
         assert!(abort.is_finished(), "cancelled warmup must not detach");
         assert!(slot.0.lock().unwrap().is_none());
@@ -336,6 +343,7 @@ mod tests {
         slot.start(
             Arc::clone(&credentials),
             &serde_json::json!({"model":"gpt-5.6-sol"}),
+            None,
         );
         tokio::task::yield_now().await;
         let mut job = slot.0.lock().unwrap().take().unwrap();
@@ -352,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn expired_ready_warmup_is_closed_instead_of_adopted() {
         let (mut state, server) = crate::tests::test_persistent_ws_state().await;
-        state.identity = prewarm_identity(&credentials());
+        state.identity = prewarm_identity(&credentials(), None);
         let request = serde_json::json!({"model":"gpt-5.6-sol", "input":[]});
         let slot = PrewarmSlot::default();
         let (sender, ready) = oneshot::channel();
@@ -363,7 +371,7 @@ mod tests {
             ready,
             task: tokio::spawn(std::future::pending()),
         });
-        assert!(slot.take_ready(&request, &credentials()).is_none());
+        assert!(slot.take_ready(&request, &credentials(), None).is_none());
         tokio::time::timeout(Duration::from_secs(1), server)
             .await
             .expect("expired socket should close")

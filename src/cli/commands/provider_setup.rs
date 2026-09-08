@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::cli::args::ProviderAuthArg;
 use crate::config::{
     Config, NamedProviderAuth, NamedProviderConfig, NamedProviderModelConfig, NamedProviderType,
+    NamedProviderWireApi,
 };
 use crate::provider_catalog::{
     api_base_uses_localhost, is_safe_env_file_name, is_safe_env_key_name, normalize_api_base,
@@ -157,6 +158,7 @@ pub(crate) fn configure_provider_profile(
         provider_type: NamedProviderType::OpenAiCompatible,
         base_url: api_base.clone(),
         api: None,
+        wire_api: NamedProviderWireApi::ChatCompletions,
         auth: auth.clone(),
         auth_header: match auth {
             NamedProviderAuth::Header => options

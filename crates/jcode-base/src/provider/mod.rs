@@ -1000,6 +1000,24 @@ impl MultiProvider {
                 });
             if let Some(provider) = existing {
                 provider
+            } else if matches!(
+                config.wire_api,
+                crate::config::NamedProviderWireApi::Responses
+            ) {
+                // Responses-only endpoints (e.g. OpenCode Zen's muse-spark
+                // models reject chat/completions) run through the native
+                // OpenAI Responses runtime with the profile's own base URL
+                // and key. The public route identity stays
+                // `openai-compatible:<name>`.
+                let provider = external::instantiate_openai_responses_profile_runtime(
+                    external::OpenAiResponsesProfileSpec {
+                        name: profile_name.to_string(),
+                        config,
+                    },
+                )?;
+                registry
+                    .install_compatible_profile(profile_name.to_string(), Arc::clone(&provider));
+                provider
             } else {
                 let provider = external::instantiate_openrouter_runtime(
                     external::OpenRouterRuntimeSpec::NamedProfile {

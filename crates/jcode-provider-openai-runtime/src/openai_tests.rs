@@ -77,7 +77,7 @@ pub(super) async fn test_persistent_ws_state() -> (PersistentWsState, tokio::tas
     (
         PersistentWsState {
             ws_stream: client_ws,
-            identity: openai_websocket_prewarm::prewarm_identity(&prewarm_test_credentials()),
+            identity: openai_websocket_prewarm::prewarm_identity(&prewarm_test_credentials(), None),
             last_response_id: "resp_test".to_string(),
             connected_at: Instant::now(),
             last_activity_at: Instant::now(),
@@ -131,7 +131,7 @@ async fn test_persistent_ws_state_with_ping_notify() -> (
     (
         PersistentWsState {
             ws_stream: client_ws,
-            identity: openai_websocket_prewarm::prewarm_identity(&prewarm_test_credentials()),
+            identity: openai_websocket_prewarm::prewarm_identity(&prewarm_test_credentials(), None),
             last_response_id: "resp_test".to_string(),
             connected_at: Instant::now(),
             last_activity_at: Instant::now(),
@@ -226,6 +226,7 @@ async fn live_openai_smoke(model: &str, sentinel: &str) -> Result<Option<String>
 
 include!("openai_tests/models_state.rs");
 include!("openai_tests/responses_input.rs");
+include!("openai_tests/responses_profile.rs");
 include!("openai_tests/transport_runtime.rs");
 include!("openai_tests/websocket_prewarm.rs");
 include!("openai_tests/payloads.rs");
