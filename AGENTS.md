@@ -42,3 +42,12 @@ Two things that waste time otherwise:
 - Confirm which binary you are actually inspecting. `strings` on
   `builds/shared-server/jcode` reads a 70-byte symlink, not a program; resolve it
   with `readlink -f` first.
+
+## Reporting substantive design changes
+
+For cross-module or architecture changes, follow
+`docs/ARCHITECTURE_DOCUMENTATION.md`. The final response should include a concise
+system-design summary, the important boundaries and invariants, the changed files,
+and concrete validation evidence. Use an inline Mermaid diagram when it makes the
+system shape easier to understand. Do not add native D2 rendering as part of this
+convention; that remains a separate, evidence-gated change.

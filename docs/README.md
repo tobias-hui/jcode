@@ -12,7 +12,7 @@ Reference documentation for the jcode codebase.
 
 ## Key entry points
 
-- Architecture: `SERVER_ARCHITECTURE.md`, `MODULAR_ARCHITECTURE_RFC.md`, `CRATE_OWNERSHIP_BOUNDARIES.md`
+- Architecture: `ARCHITECTURE_DOCUMENTATION.md`, `SERVER_ARCHITECTURE.md`, `MODULAR_ARCHITECTURE_RFC.md`, `CRATE_OWNERSHIP_BOUNDARIES.md`
 - Swarm: `SWARM_ARCHITECTURE.md`, `SWARM_TASK_GRAPH.md`
 - Memory: `MEMORY_ARCHITECTURE.md`, `MEMORY_BUDGET.md`, `MEMORY_INCIDENT_RUNBOOK.md`
 - Refactoring and quality: `REFACTORING.md`, `plans/CODE_QUALITY_10_10_PLAN.md`
@@ -25,3 +25,4 @@ Reference documentation for the jcode codebase.
 - Docs describing current behavior live at the top level; anything speculative goes in `plans/` or `proposals/`.
 - Prefer updating an existing doc over adding a near-duplicate.
 - Root of the repo should only hold README, CONTRIBUTING, RELEASING, AGENTS, LICENSE, and similar meta files. Put everything else here.
+- For cross-module changes, follow `ARCHITECTURE_DOCUMENTATION.md` and include a concise system-design summary in the final response.
