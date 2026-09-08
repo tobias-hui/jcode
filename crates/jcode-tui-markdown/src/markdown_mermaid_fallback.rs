@@ -19,6 +19,10 @@ pub fn is_mermaid_lang(lang: &str) -> bool {
     lang.eq_ignore_ascii_case("mermaid") || lang.eq_ignore_ascii_case("mmd")
 }
 
+pub fn is_d2_lang(_lang: &str) -> bool {
+    false
+}
+
 pub fn image_protocol_available() -> bool {
     false
 }
@@ -71,6 +75,18 @@ pub fn render_mermaid_untracked(_content: &str, _terminal_width: Option<u16>) ->
 
 pub fn render_mermaid_sized(_content: &str, _terminal_width: Option<u16>) -> RenderResult {
     RenderResult::Error("Mermaid rendering is disabled".to_string())
+}
+
+pub fn render_d2_sized(
+    _content: &str,
+    _terminal_width: Option<u16>,
+    _register_active: bool,
+) -> RenderResult {
+    RenderResult::Error("D2 rendering is disabled".to_string())
+}
+
+pub fn render_d2_untracked(_content: &str, _terminal_width: Option<u16>) -> RenderResult {
+    RenderResult::Error("D2 rendering is disabled".to_string())
 }
 
 pub fn set_streaming_preview_diagram(

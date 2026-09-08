@@ -380,10 +380,27 @@ pub fn render_markdown_lazy(
             }
             Event::End(TagEnd::CodeBlock) => {
                 let is_mermaid = should_render_mermaid_block(code_block_lang.as_deref());
+                let is_d2 = code_block_lang
+                    .as_deref()
+                    .map(mermaid::is_d2_lang)
+                    .unwrap_or(false);
 
                 if is_mermaid {
                     let terminal_width = max_width.and_then(|w| u16::try_from(w).ok());
-                    let result = if deferred_mermaid_mode {
+                    let result = if is_d2 {
+                        Some(if mermaid_should_register_active() {
+                            mermaid::render_d2_sized(
+                                &code_block_content,
+                                max_width.and_then(|w| u16::try_from(w).ok()),
+                                true,
+                            )
+                        } else {
+                            mermaid::render_d2_untracked(
+                                &code_block_content,
+                                max_width.and_then(|w| u16::try_from(w).ok()),
+                            )
+                        })
+                    } else if deferred_mermaid_mode {
                         mermaid::render_mermaid_deferred_with_registration(
                             &code_block_content,
                             terminal_width,

@@ -411,13 +411,30 @@ pub fn render_markdown_with_width(text: &str, max_width: Option<usize>) -> Vec<L
             Event::End(TagEnd::CodeBlock) => {
                 // Check if this is a mermaid diagram
                 let is_mermaid = should_render_mermaid_block(code_block_lang.as_deref());
+                let is_d2 = code_block_lang
+                    .as_deref()
+                    .map(mermaid::is_d2_lang)
+                    .unwrap_or(false);
 
                 if is_mermaid {
                     dbg_mermaid_blocks += 1;
                     // Render mermaid diagram.
                     // In streaming mode this updates only the ephemeral preview entry.
                     let terminal_width = max_width.and_then(|w| u16::try_from(w).ok());
-                    let result = if streaming_mode {
+                    let result = if is_d2 {
+                        Some(if mermaid_should_register_active() {
+                            mermaid::render_d2_sized(
+                                &code_block_content,
+                                max_width.and_then(|w| u16::try_from(w).ok()),
+                                true,
+                            )
+                        } else {
+                            mermaid::render_d2_untracked(
+                                &code_block_content,
+                                max_width.and_then(|w| u16::try_from(w).ok()),
+                            )
+                        })
+                    } else if streaming_mode {
                         mermaid::render_mermaid_deferred_with_stream_scope(
                             &code_block_content,
                             terminal_width,

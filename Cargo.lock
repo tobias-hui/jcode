@@ -4137,7 +4137,9 @@ dependencies = [
  "resvg 0.46.0",
  "serde",
  "serde_json",
+ "tempfile",
  "usvg 0.46.0",
+ "wait-timeout",
 ]
 
 [[package]]

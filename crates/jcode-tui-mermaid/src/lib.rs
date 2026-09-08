@@ -207,6 +207,9 @@ pub use active::{
     set_streaming_preview_diagram, snapshot_active_diagrams,
 };
 
+#[cfg(feature = "d2-renderer")]
+#[path = "d2.rs"]
+mod d2;
 #[path = "mermaid_model.rs"]
 mod model;
 pub use model::{
@@ -264,6 +267,14 @@ pub use viewport_render::{
     render_image_widget_viewport_precise,
 };
 pub use widget_render::{render_image_widget, render_image_widget_fit, render_image_widget_scale};
+
+#[cfg(feature = "d2-renderer")]
+pub use d2::{is_d2_lang, render_d2_sized, render_d2_untracked};
+
+#[cfg(not(feature = "d2-renderer"))]
+pub fn is_d2_lang(_lang: &str) -> bool {
+    false
+}
 
 use cache_render::LAYOUT_CACHE_MAX;
 #[cfg(test)]

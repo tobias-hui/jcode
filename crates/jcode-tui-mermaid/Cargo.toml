@@ -5,8 +5,9 @@ edition = "2024"
 publish = false
 
 [features]
-default = ["mmdr-size-api"]
+default = ["mmdr-size-api", "d2-renderer"]
 renderer = ["dep:mermaid-rs-renderer"]
+d2-renderer = ["renderer", "dep:tempfile", "dep:wait-timeout"]
 # Enables the renderer size API path. The pinned mmdr tag (v0.3.1+) ships the
 # size API, and build.rs enables it by default; set JCODE_MMDR_SIZE_API_DISABLE=1
 # to fall back to the legacy SVG-retarget path.
@@ -26,6 +27,8 @@ resvg = "0.46"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 usvg = "0.46"
+tempfile = { version = "3", optional = true }
+wait-timeout = { version = "0.2", optional = true }
 
 [dev-dependencies]
 jcode-plan = { path = "../jcode-plan" }

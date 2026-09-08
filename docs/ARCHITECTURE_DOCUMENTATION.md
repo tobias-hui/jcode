@@ -82,11 +82,13 @@ flowchart LR
 Use the sections only when they add information. Small local changes should retain
 the normal concise response format.
 
-Jcode currently renders Mermaid diagrams in chat and side panels. D2/TALA diagrams
-may be kept as repository artifacts when their layout is more useful, but native D2
-rendering in jcode is intentionally not part of this convention. That decision can
-be revisited after a real documentation pilot demonstrates a benefit that Mermaid
-does not provide.
+Jcode renders Mermaid and D2 diagrams in chat and side panels when the native image
+path is available. Mermaid uses its existing renderer; D2 uses a local `d2`
+executable with the TALA layout, then enters the same SVG-to-PNG, cache, and
+terminal-image path. Set `JCODE_D2_BIN` to override the executable path. Jcode does
+not download or bundle D2, and D2 imports and external URLs are rejected at the
+adapter boundary. The diagram source remains authoritative for agents; the rendered
+image is a human navigation aid.
 
 ## Pilot
 
