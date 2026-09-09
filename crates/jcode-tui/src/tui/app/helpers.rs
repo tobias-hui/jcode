@@ -827,11 +827,15 @@ mod helpers_tests;
 pub(super) fn clipboard_image() -> Option<(String, String)> {
     use base64::Engine;
 
-    // Try wl-paste first (native Wayland - better image format support)
-    if std::env::var("WAYLAND_DISPLAY").is_ok()
-        && let Ok(output) = std::process::Command::new("wl-paste")
-            .arg("--list-types")
-            .output()
+    // Try wl-paste first (native Wayland - better image format support).
+    // Do not gate on WAYLAND_DISPLAY: env-scrubbed parents (daemonized
+    // terminal multiplexers, detached serve processes) can drop the variable
+    // while a Wayland socket is still reachable through wl-paste's default
+    // wayland-0 fallback. wl-paste exits fast with an error when no Wayland
+    // server exists, so non-Wayland sessions still fall through cleanly.
+    if let Ok(output) = std::process::Command::new("wl-paste")
+        .arg("--list-types")
+        .output()
     {
         let types = String::from_utf8_lossy(&output.stdout);
         crate::logging::info(&format!(
@@ -947,13 +951,14 @@ pub(super) fn copy_image_to_clipboard(media_type: &str, base64_data: &str) -> bo
     };
     // `wl-copy` keeps serving the selection after this function returns. A
     // short-lived arboard owner can disappear as soon as Clipboard is dropped.
-    if std::env::var("WAYLAND_DISPLAY").is_ok()
-        && let Ok(mut child) = std::process::Command::new("wl-copy")
-            .args(["--type", media_type])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
+    // Attempt wl-copy even without WAYLAND_DISPLAY: env-scrubbed parents can
+    // drop the variable while a socket is still reachable (see clipboard_image).
+    if let Ok(mut child) = std::process::Command::new("wl-copy")
+        .args(["--type", media_type])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
     {
         let wrote = child
             .stdin

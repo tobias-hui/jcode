@@ -99,8 +99,10 @@ impl App {
 /// On Wayland we use `wl-copy -t image/png`; otherwise fall back to `xclip`,
 /// then arboard (which expects raw RGBA, so we decode the PNG for it).
 fn copy_image_to_clipboard(path: &Path, png: &[u8]) -> bool {
-    // Wayland: wl-copy from a file is most reliable.
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() && copy_image_wl(png) {
+    // Wayland: wl-copy from a file is most reliable. Attempt it even without
+    // WAYLAND_DISPLAY (env-scrubbed parents; see app::helpers::clipboard_image);
+    // copy_image_wl fails fast and falls through when no Wayland server exists.
+    if copy_image_wl(png) {
         return true;
     }
 

@@ -252,9 +252,11 @@ where
 }
 
 fn read_clipboard_text() -> Option<String> {
-    if std::env::var("WAYLAND_DISPLAY").is_ok()
-        && let Some(text) = read_wayland_clipboard_text()
-    {
+    // Attempt wl-paste even when WAYLAND_DISPLAY is unset: env-scrubbed
+    // parents (daemonized multiplexers) can drop the variable while a Wayland
+    // socket remains reachable via wl-paste's wayland-0 fallback. Failures
+    // return None quickly and fall through to arboard.
+    if let Some(text) = read_wayland_clipboard_text() {
         return Some(text);
     }
 
@@ -2931,7 +2933,10 @@ fn paste_placeholder(content: &str) -> String {
 impl App {
     pub(super) fn handle_key_event(&mut self, event: crossterm::event::KeyEvent) {
         if self.remote_login.is_some() {
-            if matches!(event.kind, crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat) {
+            if matches!(
+                event.kind,
+                crossterm::event::KeyEventKind::Press | crossterm::event::KeyEventKind::Repeat
+            ) {
                 let _ = self.handle_key_press_event(event);
             }
             return;
