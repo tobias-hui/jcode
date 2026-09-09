@@ -153,7 +153,14 @@ impl Tool for McpCallTool {
                 "tool": {"type": "string", "description": "Raw MCP tool name."},
                 "arguments": {
                     "type": "object",
-                    "description": "Arguments matching the input schema returned by mcp_search."
+                    "description": "Arguments matching the input schema returned by mcp_search.",
+                    // Open-world on purpose, like `batch`: schema-guided decoders
+                    // (observed on Kimi K3 via OpenRouter) constrain tool-call
+                    // output to the declared properties, and the OpenRouter
+                    // dialect injects an empty `properties` map into bare object
+                    // schemas (require_properties_on_objects, #446). Together
+                    // they silently collapsed every call's arguments to `{}`.
+                    "additionalProperties": true
                 }
             },
             "required": ["server", "tool", "arguments"]
@@ -692,6 +699,38 @@ mod tests {
             crate::mcp::McpConfig::default(),
         )));
         McpManagementTool::new(manager)
+    }
+
+    /// `mcp_call.arguments` is an open-world map: MCP server tool schemas are
+    /// not known at build time, so no keys can be declared. The OpenRouter
+    /// dialect injects an empty `properties` map into bare object schemas
+    /// (`require_properties_on_objects`, #446), and schema-guided decoders
+    /// (observed: Kimi K3 via OpenRouter, 2026-09-09) then constrain tool-call
+    /// output to those zero keys, silently collapsing every call's arguments
+    /// to `{}`. `additionalProperties: true` keeps the map open through
+    /// dialect normalization, like `batch`'s sub-call payloads.
+    #[test]
+    fn mcp_call_arguments_stay_open_world_after_dialect_normalization() {
+        let manager = Arc::new(RwLock::new(McpManager::with_config(
+            crate::mcp::McpConfig::default(),
+        )));
+        let tool = McpCallTool::new(manager);
+        let schema = tool.parameters_schema();
+
+        for dialect in [
+            &jcode_schema_dialect::registry::OPENROUTER,
+            &jcode_schema_dialect::registry::OPENAI,
+            &jcode_schema_dialect::registry::ANTHROPIC,
+        ] {
+            let normalized = jcode_schema_dialect::normalize(&schema, dialect);
+            let arguments = &normalized["properties"]["arguments"];
+            assert_eq!(
+                arguments.get("additionalProperties"),
+                Some(&serde_json::json!(true)),
+                "mcp_call.arguments lost its open-world marker under the {} dialect: {arguments}",
+                dialect.id,
+            );
+        }
     }
 
     fn create_test_context() -> ToolContext {
