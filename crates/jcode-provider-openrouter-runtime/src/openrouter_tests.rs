@@ -1456,6 +1456,202 @@ fn direct_zai_profile_applies_configured_effort_on_construction_and_model_switch
 }
 
 #[test]
+fn direct_kimi_profile_exposes_kimi_reasoning_effort_ladder() {
+    let provider = OpenRouterProvider {
+        profile_id: Some("kimi".to_string()),
+        supports_provider_features: false,
+        ..make_custom_compatible_provider()
+    };
+
+    assert_eq!(
+        provider.available_efforts(),
+        jcode_provider_core::KIMI_SELECTABLE_EFFORTS
+    );
+    provider
+        .set_reasoning_effort("max")
+        .expect("Kimi coding endpoint should accept max effort");
+    assert_eq!(provider.reasoning_effort().as_deref(), Some("max"));
+    provider
+        .set_reasoning_effort("medium")
+        .expect("jcode's medium rung should be accepted for Kimi");
+    assert_eq!(provider.reasoning_effort().as_deref(), Some("medium"));
+    provider
+        .set_reasoning_effort("none")
+        .expect("Kimi coding endpoint should accept none (thinking off)");
+    assert_eq!(provider.reasoning_effort().as_deref(), Some("none"));
+}
+
+#[test]
+fn direct_kimi_profile_sends_wire_effort_with_medium_mapped_to_high() {
+    let _lock = ENV_LOCK.lock();
+    let _thinking = EnvVarGuard::remove("JCODE_OPENROUTER_THINKING");
+    let (api_base, request_rx) = spawn_single_response_chat_server();
+    let provider = OpenRouterProvider {
+        api_base,
+        profile_id: Some("kimi".to_string()),
+        supports_provider_features: false,
+        supports_model_catalog: false,
+        model: Arc::new(RwLock::new("kimi-for-coding".to_string())),
+        reasoning_effort: Arc::new(RwLock::new(Some("medium".to_string()))),
+        ..make_custom_compatible_provider()
+    };
+
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+        }],
+        timestamp: None,
+        tool_duration_ms: None,
+    }];
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let mut stream = provider
+            .complete(&messages, &[], "", None)
+            .await
+            .expect("fake chat request should start");
+        while let Some(event) = stream.next().await {
+            if event.is_err() {
+                break;
+            }
+        }
+    });
+
+    let request = request_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture fake provider request");
+    let body = parse_captured_request_body(&request);
+    assert_eq!(
+        body.get("reasoning_effort").and_then(|v| v.as_str()),
+        Some("high"),
+        "medium is not a Kimi wire value; the endpoint maps it to high"
+    );
+    assert!(
+        body.get("reasoning").is_none(),
+        "the Kimi coding endpoint takes a top-level reasoning_effort, not unified reasoning"
+    );
+}
+
+#[test]
+fn direct_kimi_profile_without_effort_sends_no_reasoning_effort_field() {
+    let _lock = ENV_LOCK.lock();
+    let _thinking = EnvVarGuard::remove("JCODE_OPENROUTER_THINKING");
+    let (api_base, request_rx) = spawn_single_response_chat_server();
+    let provider = OpenRouterProvider {
+        api_base,
+        profile_id: Some("kimi".to_string()),
+        supports_provider_features: false,
+        supports_model_catalog: false,
+        model: Arc::new(RwLock::new("kimi-for-coding".to_string())),
+        reasoning_effort: Arc::new(RwLock::new(None)),
+        ..make_custom_compatible_provider()
+    };
+
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+        }],
+        timestamp: None,
+        tool_duration_ms: None,
+    }];
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let mut stream = provider
+            .complete(&messages, &[], "", None)
+            .await
+            .expect("fake chat request should start");
+        while let Some(event) = stream.next().await {
+            if event.is_err() {
+                break;
+            }
+        }
+    });
+
+    let request = request_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture fake provider request");
+    let body = parse_captured_request_body(&request);
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "without an explicit effort the field must be omitted so the endpoint applies \
+         its native default (high for K3, max for K2.8 Preview); got: {body}"
+    );
+    assert!(
+        body.get("thinking").is_none(),
+        "auto thinking stays server-side on the Kimi coding endpoint (issue #322)"
+    );
+}
+
+#[test]
+fn direct_kimi_profile_none_effort_disables_thinking_instead_of_wire_effort() {
+    let _lock = ENV_LOCK.lock();
+    let _thinking = EnvVarGuard::remove("JCODE_OPENROUTER_THINKING");
+    let (api_base, request_rx) = spawn_single_response_chat_server();
+    let provider = OpenRouterProvider {
+        api_base,
+        profile_id: Some("kimi".to_string()),
+        supports_provider_features: false,
+        supports_model_catalog: false,
+        model: Arc::new(RwLock::new("kimi-for-coding".to_string())),
+        reasoning_effort: Arc::new(RwLock::new(Some("none".to_string()))),
+        ..make_custom_compatible_provider()
+    };
+
+    let messages = vec![Message {
+        role: Role::User,
+        content: vec![ContentBlock::Text {
+            text: "hi".to_string(),
+            cache_control: None,
+        }],
+        timestamp: None,
+        tool_duration_ms: None,
+    }];
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let mut stream = provider
+            .complete(&messages, &[], "", None)
+            .await
+            .expect("fake chat request should start");
+        while let Some(event) = stream.next().await {
+            if event.is_err() {
+                break;
+            }
+        }
+    });
+
+    let request = request_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("capture fake provider request");
+    let body = parse_captured_request_body(&request);
+    assert_eq!(
+        body.get("thinking")
+            .and_then(|t| t.get("type"))
+            .and_then(|v| v.as_str()),
+        Some("disabled"),
+        "the docs' third-party mapping expresses effort none as thinking disabled; got: {body}"
+    );
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "`none` must not be sent as a reasoning_effort wire value (HTTP 400)"
+    );
+}
+
+#[test]
 fn openrouter_profile_exposes_unified_reasoning_effort() {
     let provider = make_provider();
 

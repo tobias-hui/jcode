@@ -1279,3 +1279,49 @@ fn novita_static_models_are_available_before_live_catalog_refresh() {
         assert!(models.iter().any(|candidate| candidate == model));
     }
 }
+
+#[test]
+fn kimi_static_models_track_the_live_coding_endpoint_catalog() {
+    // api.kimi.com/coding serves exactly these four ids (docs: Model
+    // Configuration, 2026-09). The retired K2-era ids must not linger.
+    let models = openai_compatible_profile_static_models(KIMI_PROFILE);
+    assert_eq!(
+        models,
+        vec![
+            "kimi-for-coding".to_string(),
+            "k3".to_string(),
+            "k3-256k".to_string(),
+            "kimi-for-coding-highspeed".to_string(),
+        ]
+    );
+    assert_eq!(
+        KIMI_PROFILE.default_model,
+        Some("kimi-for-coding"),
+        "the K2.8 Preview alias stays the profile default"
+    );
+    // Every curated id resolves a published context window (1M for the K2.8
+    // Preview alias and K3, 256K for the two 256K-only ids).
+    for model in &models {
+        assert_eq!(
+            openai_compatible_profile_context_limit("kimi", model),
+            jcode_provider_core::models::open_weight_family_context_limit(model),
+            "{model} should resolve through the shared family table"
+        );
+    }
+    assert_eq!(
+        openai_compatible_profile_context_limit("kimi", "kimi-for-coding"),
+        Some(1_048_576)
+    );
+    assert_eq!(
+        openai_compatible_profile_context_limit("kimi", "k3"),
+        Some(1_048_576)
+    );
+    assert_eq!(
+        openai_compatible_profile_context_limit("kimi", "k3-256k"),
+        Some(262_144)
+    );
+    assert_eq!(
+        openai_compatible_profile_context_limit("kimi", "kimi-for-coding-highspeed"),
+        Some(262_144)
+    );
+}

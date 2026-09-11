@@ -951,6 +951,14 @@ impl OpenRouterProvider {
         matches!(profile_id, Some(id) if id.eq_ignore_ascii_case("zai"))
     }
 
+    /// Moonshot's Kimi coding endpoint accepts `reasoning_effort` (low/high/
+    /// max) on K3 and K2.8 Preview; any other value is an HTTP 400, so the
+    /// request builder maps jcode's ladder onto that vocabulary (docs: Model
+    /// Configuration, 2026-09).
+    fn profile_supports_kimi_reasoning_effort(profile_id: Option<&str>) -> bool {
+        matches!(profile_id, Some(id) if id.eq_ignore_ascii_case("kimi"))
+    }
+
     /// DeepSeek-family models accept the DeepSeek-style top-level
     /// `reasoning_effort` request field regardless of which OpenAI-compatible
     /// gateway serves them (issue #352: profiles like opencode-go serve
@@ -981,6 +989,19 @@ impl OpenRouterProvider {
             && Self::model_is_deepseek_family(&self.model_snapshot())
     }
 
+    /// Does this runtime accept the Kimi coding-endpoint `reasoning_effort`
+    /// vocabulary? Priority mirrors the DeepSeek accessor: explicit
+    /// named-profile config override first, then the dedicated kimi profile.
+    pub(crate) fn supports_kimi_reasoning_effort(&self) -> bool {
+        if self.model_reasoning_support() == Some(false) {
+            return false;
+        }
+        if let Some(explicit) = self.reasoning_effort_support {
+            return explicit;
+        }
+        Self::profile_supports_kimi_reasoning_effort(self.profile_id.as_deref())
+    }
+
     /// GPT-family reasoning models (gpt-5.x, codex variants, o-series) accept
     /// the standard OpenAI `reasoning_effort` request field on any
     /// OpenAI-compatible gateway that proxies them (e.g. OpenCode Zen serving
@@ -1004,6 +1025,11 @@ impl OpenRouterProvider {
             return explicit;
         }
         if self.reasoning_effort_support == Some(false) {
+            return false;
+        }
+        if Self::profile_supports_kimi_reasoning_effort(self.profile_id.as_deref()) {
+            // The Kimi endpoint speaks its own low/high/max vocabulary, not
+            // the full OpenAI ladder; the kimi accessor handles this lane.
             return false;
         }
         if Self::profile_supports_openai_reasoning_effort(self.profile_id.as_deref()) {
@@ -1048,6 +1074,7 @@ impl OpenRouterProvider {
     pub(crate) fn supports_any_reasoning_effort(&self) -> bool {
         self.supports_deepseek_reasoning_effort()
             || self.supports_openai_reasoning_effort()
+            || self.supports_kimi_reasoning_effort()
             || Self::profile_supports_unified_reasoning(
                 self.profile_id.as_deref(),
                 self.send_openrouter_headers,
@@ -1059,6 +1086,8 @@ impl OpenRouterProvider {
             Self::normalize_reasoning_effort(effort)
         } else if self.supports_openai_reasoning_effort() {
             Self::normalize_openai_reasoning_effort(effort)
+        } else if self.supports_kimi_reasoning_effort() {
+            Self::normalize_kimi_reasoning_effort(effort)
         } else {
             Self::normalize_unified_reasoning_effort(effort)
         }
@@ -1073,7 +1102,8 @@ impl OpenRouterProvider {
     ) -> Option<String> {
         let supported = reasoning_effort_support.unwrap_or(
             Self::profile_supports_reasoning_effort(profile_id)
-                || Self::profile_supports_openai_reasoning_effort(profile_id),
+                || Self::profile_supports_openai_reasoning_effort(profile_id)
+                || Self::profile_supports_kimi_reasoning_effort(profile_id),
         );
         if !supported {
             return None;
@@ -1085,6 +1115,8 @@ impl OpenRouterProvider {
             .and_then(|effort| {
                 if Self::profile_supports_openai_reasoning_effort(profile_id) {
                     Self::normalize_openai_reasoning_effort(effort)
+                } else if Self::profile_supports_kimi_reasoning_effort(profile_id) {
+                    Self::normalize_kimi_reasoning_effort(effort)
                 } else {
                     Self::normalize_reasoning_effort(effort)
                 }
@@ -1138,6 +1170,27 @@ impl OpenRouterProvider {
             other => {
                 jcode_base::logging::info(&format!(
                     "Warning: Ignoring unsupported OpenAI-compatible reasoning effort '{}'.",
+                    other
+                ));
+                None
+            }
+        }
+    }
+
+    /// Kimi coding-endpoint effort vocabulary. The wire accepts only
+    /// low/high/max (unknown values are an HTTP 400); `medium` is accepted in
+    /// the UX because the endpoint itself maps it to `high`, and `swarm*` map
+    /// to the strongest level like on other lanes.
+    fn normalize_kimi_reasoning_effort(raw: &str) -> Option<String> {
+        let value = raw.trim().to_ascii_lowercase();
+        if value.is_empty() {
+            return None;
+        }
+        match value.as_str() {
+            "none" | "low" | "medium" | "high" | "max" | "swarm" | "swarm-deep" => Some(value),
+            other => {
+                jcode_base::logging::info(&format!(
+                    "Warning: Ignoring unsupported Kimi reasoning effort '{}'; expected none|low|medium|high|max.",
                     other
                 ));
                 None

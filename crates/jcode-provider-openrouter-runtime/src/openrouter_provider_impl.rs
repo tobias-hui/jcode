@@ -151,6 +151,28 @@ impl Provider for OpenRouterProvider {
                     request["reasoning_effort"] = serde_json::json!(effort);
                     sent_reasoning_config = true;
                 }
+            } else if self.supports_kimi_reasoning_effort() {
+                // The Kimi coding endpoint accepts reasoning_effort only as
+                // low/high/max (anything else is an HTTP 400) and applies its
+                // own native default when the field is absent (high for K3,
+                // max for K2.8 Preview), so map jcode's ladder onto that
+                // vocabulary. `none` is not a wire effort value: the docs'
+                // third-party mapping sends `thinking: {type: "disabled"}`
+                // instead.
+                let effort = if jcode_base::prompt::is_swarm_effort(effort) {
+                    "max"
+                } else if effort == "medium" {
+                    // Not a wire value; the endpoint maps medium to high.
+                    "high"
+                } else {
+                    effort
+                };
+                if effort == "none" {
+                    request["thinking"] = serde_json::json!({ "type": "disabled" });
+                } else {
+                    request["reasoning_effort"] = serde_json::json!(effort);
+                }
+                sent_reasoning_config = true;
             } else if self.supports_openai_reasoning_effort() {
                 // GPT-family models on direct compat gateways (e.g. OpenCode
                 // Zen serving gpt-5.3-codex-spark) take the standard OpenAI
@@ -438,6 +460,7 @@ impl Provider for OpenRouterProvider {
         }
 
         if Self::profile_supports_openai_reasoning_effort(self.profile_id.as_deref())
+            || Self::profile_supports_kimi_reasoning_effort(self.profile_id.as_deref())
             || self
                 .model_reasoning_config()
                 .and_then(|config| config.1.as_ref())
@@ -507,6 +530,8 @@ impl Provider for OpenRouterProvider {
     fn available_efforts(&self) -> Vec<&'static str> {
         if self.supports_deepseek_reasoning_effort() {
             jcode_provider_core::DEEPSEEK_SELECTABLE_EFFORTS.to_vec()
+        } else if self.supports_kimi_reasoning_effort() {
+            jcode_provider_core::KIMI_SELECTABLE_EFFORTS.to_vec()
         } else if self.supports_openai_reasoning_effort() {
             jcode_provider_core::OPENAI_SELECTABLE_EFFORTS.to_vec()
         } else if Self::profile_supports_unified_reasoning(

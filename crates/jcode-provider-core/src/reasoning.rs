@@ -284,6 +284,24 @@ pub const DEEPSEEK_SELECTABLE_EFFORTS: &[&str] = &[
     "swarm-deep",
 ];
 
+/// Moonshot Kimi Code coding-plan effort levels (docs: Model Configuration).
+///
+/// Both K3 and K2.8 Preview accept `reasoning_effort: low | high | max` and
+/// return HTTP 400 for any other value. `medium` is not a wire value (the
+/// endpoint maps it to `high`), and `none` disables thinking server-side, so
+/// both stay selectable in the UX ladder while the request builder does the
+/// mapping. Without an explicit effort no field is sent and the endpoint
+/// applies its native default (high for K3, max for K2.8 Preview).
+pub const KIMI_SELECTABLE_EFFORTS: &[&str] = &[
+    "none",
+    "low",
+    "medium",
+    "high",
+    "max",
+    "swarm",
+    "swarm-deep",
+];
+
 /// Convert a provider-advertised OpenAI/OpenRouter effort into the canonical
 /// static value used by the provider trait.
 pub fn canonical_reasoning_effort(value: &str) -> Option<&'static str> {
@@ -314,6 +332,10 @@ pub fn inferred_reasoning_efforts(
 
     if provider.contains("deepseek") || model.contains("deepseek") {
         return DEEPSEEK_SELECTABLE_EFFORTS.to_vec();
+    }
+
+    if provider.contains("kimi") || model.contains("kimi") {
+        return KIMI_SELECTABLE_EFFORTS.to_vec();
     }
 
     if provider.contains("z.ai") || provider == "zai" || model.starts_with("glm-") {

@@ -514,11 +514,14 @@ pub fn openai_compatible_profile_static_models(profile: OpenAiCompatibleProfile)
             push("Llama-3.3-70B-Instruct");
         }
         "kimi" => {
+            // api.kimi.com/coding serves exactly four ids (docs: Model
+            // Configuration). kimi-for-coding is K2.8 Preview (1M context,
+            // effort low/high/max); kimi-for-coding-highspeed is K2.7
+            // HighSpeed (256K). Older `kimi-k2*` ids no longer exist there.
             push("kimi-for-coding");
-            push("kimi-k2.5");
-            push("kimi-k2.6");
-            push("kimi-k2-thinking");
-            push("kimi-k2-thinking-turbo");
+            push("k3");
+            push("k3-256k");
+            push("kimi-for-coding-highspeed");
         }
         "firmware" => {
             push("kimi-k2.5");

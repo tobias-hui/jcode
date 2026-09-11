@@ -372,6 +372,13 @@ pub fn open_weight_family_context_limit(model: &str) -> Option<usize> {
         if m.ends_with("-256k") {
             return Some(262_144);
         }
+        // The coding-plan alias `kimi-for-coding` is upgraded in place to
+        // K2.8 Preview, which ships a 1M window (docs: Model Configuration,
+        // 2026-09). It carries no parseable `k<n>` generation, so pin it
+        // explicitly; `-highspeed` stays on the K2.7-era 256K window.
+        if m.contains("for-coding") && !m.contains("highspeed") {
+            return Some(1_048_576);
+        }
         // K3 and newer ship a 1M window; K2 and earlier are 256K.
         if kimi_generation(m).is_some_and(|generation| generation >= 3) {
             return Some(1_048_576);
@@ -546,6 +553,28 @@ mod tests {
         // The K2 family keeps its 256K window.
         assert_eq!(
             open_weight_family_context_limit("moonshotai/kimi-k2"),
+            Some(262_144)
+        );
+    }
+
+    #[test]
+    fn kimi_for_coding_k2_8_resolves_to_one_million_context() {
+        // kimi-for-coding is Kimi Code's in-place K2.8 Preview alias: 1M
+        // window, no parseable k<n> generation in the id (docs: Model
+        // Configuration, 2026-09).
+        assert_eq!(
+            open_weight_family_context_limit("kimi-for-coding"),
+            Some(1_048_576)
+        );
+        assert_eq!(context_limit_for_model("kimi-for-coding"), Some(1_048_576));
+        // The HighSpeed variant is K2.7 and stays at 256K.
+        assert_eq!(
+            open_weight_family_context_limit("kimi-for-coding-highspeed"),
+            Some(262_144)
+        );
+        // Older K2-era coding ids must not inherit the 1M upgrade.
+        assert_eq!(
+            open_weight_family_context_limit("kimi-k2.5"),
             Some(262_144)
         );
     }
