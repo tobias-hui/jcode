@@ -381,6 +381,13 @@ pub struct CompactionConfig {
 
     /// [semantic] Number of recent turns to look at for building the "current goal" embedding
     pub goal_window_turns: usize,
+
+    /// [reactive] Absolute token cap on the compaction trigger. The reactive
+    /// trigger fires at `min(COMPACTION_THRESHOLD * context_window, cap)`:
+    /// large windows (e.g. 1M) compact at the cap instead of waiting for the
+    /// ratio, while small windows keep ratio-driven behavior unchanged.
+    /// `None` (default) disables the cap.
+    pub reactive_cap_tokens: Option<usize>,
 }
 
 impl Default for CompactionConfig {
@@ -396,6 +403,7 @@ impl Default for CompactionConfig {
             topic_shift_threshold: 0.45,
             relevance_keep_threshold: 0.65,
             goal_window_turns: 5,
+            reactive_cap_tokens: None,
         }
     }
 }

@@ -834,6 +834,21 @@ impl CompactionManager {
         self.effective_token_count() as f32 / self.token_budget as f32
     }
 
+    /// Token threshold at which the reactive trigger fires:
+    /// `min(COMPACTION_THRESHOLD * budget, reactive_cap_tokens)`.
+    /// The cap only matters for large context windows (e.g. 1M models, where
+    /// the ratio alone means 800k); windows small enough that the ratio fires
+    /// first are unaffected.
+    fn reactive_threshold_tokens(&self) -> usize {
+        // Floor the ratio product so an exactly-at-threshold context still
+        // fires (the f32 literal 0.80 widens to 0.8000000119… in f64).
+        let ratio = (COMPACTION_THRESHOLD as f64 * self.token_budget as f64).floor() as usize;
+        match self.compaction_config.reactive_cap_tokens {
+            Some(cap) => ratio.min(cap.max(1)),
+            None => ratio,
+        }
+    }
+
     /// Check if we should start compaction
     pub fn should_compact_with(&self, all_messages: &[Message]) -> bool {
         use crate::config::CompactionMode;
@@ -844,7 +859,8 @@ impl CompactionManager {
         match self.mode {
             CompactionMode::Reactive => {
                 self.pending_task.is_none()
-                    && self.context_usage_with(all_messages) >= COMPACTION_THRESHOLD
+                    && self.effective_token_count_with(all_messages)
+                        >= self.reactive_threshold_tokens()
                     && active.len() > RECENT_TURNS_TO_KEEP
             }
             CompactionMode::Proactive => {

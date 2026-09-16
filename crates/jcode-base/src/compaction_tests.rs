@@ -1105,3 +1105,66 @@ fn test_recover_within_budget_summary_line_variants() {
     assert!(line.contains("shortened 5 large tool result(s)"));
     assert!(!line.contains("dropped"));
 }
+
+fn twelve_messages() -> Vec<Message> {
+    (0..12)
+        .map(|i| make_text_message(Role::User, &format!("message {i}")))
+        .collect()
+}
+
+#[test]
+fn test_reactive_cap_triggers_large_window_early() {
+    // 1M window with a 500k cap: compacts at the cap, not at the 800k ratio.
+    let mut manager = CompactionManager::new().with_budget(1_000_000);
+    manager.compaction_config.reactive_cap_tokens = Some(500_000);
+    let messages = twelve_messages();
+    for _ in &messages {
+        manager.notify_message_added();
+    }
+
+    manager.update_observed_input_tokens(499_999);
+    assert!(
+        !manager.should_compact_with(&messages),
+        "below the cap the reactive trigger must stay silent"
+    );
+
+    manager.update_observed_input_tokens(500_000);
+    assert!(
+        manager.should_compact_with(&messages),
+        "reaching the cap must fire the reactive trigger even though the 80% ratio (800k) is far away"
+    );
+}
+
+#[test]
+fn test_reactive_cap_does_not_affect_small_windows() {
+    // 200k window: the 80% ratio (160k) fires before the 500k cap, so the cap
+    // must not change behavior at all.
+    let mut manager = CompactionManager::new().with_budget(200_000);
+    manager.compaction_config.reactive_cap_tokens = Some(500_000);
+    let messages = twelve_messages();
+    for _ in &messages {
+        manager.notify_message_added();
+    }
+
+    manager.update_observed_input_tokens(150_000);
+    assert!(!manager.should_compact_with(&messages));
+
+    manager.update_observed_input_tokens(160_000);
+    assert!(manager.should_compact_with(&messages));
+}
+
+#[test]
+fn test_reactive_cap_disabled_by_default() {
+    let mut manager = CompactionManager::new().with_budget(1_000_000);
+    assert_eq!(manager.compaction_config.reactive_cap_tokens, None);
+    let messages = twelve_messages();
+    for _ in &messages {
+        manager.notify_message_added();
+    }
+
+    manager.update_observed_input_tokens(500_000);
+    assert!(
+        !manager.should_compact_with(&messages),
+        "with no cap configured the default ratio behavior is unchanged"
+    );
+}
