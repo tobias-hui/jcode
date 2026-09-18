@@ -383,7 +383,9 @@ pub(crate) fn stop_capturing_clipboard_for_tests() {
 /// (arboard) is authoritative, with OSC 52 as a remote-session fallback.
 /// Elsewhere, try wl-copy (Wayland), then xclip/xsel (X11, which keep owning
 /// the selection unlike arboard), then arboard, then OSC 52 as the
-/// remote-session fallback (SSH / Docker / tmux).
+/// remote-session fallback (SSH / Docker / tmux). The `[display] clipboard_mode`
+/// setting (auto/native/osc52) can override the Linux ordering: `osc52` copies
+/// straight to the terminal client, `native` restores the always-native order.
 pub(super) fn copy_to_clipboard(text: &str) -> bool {
     // Under test, never touch the OS clipboard. Beyond making results identical
     // on a desktop and a headless runner, the Linux path below spawns `wl-copy`,
@@ -468,34 +470,46 @@ pub(super) fn copy_to_clipboard(text: &str) -> bool {
         // fail fast for lack of a display server.
         #[cfg(not(any(windows, target_os = "macos")))]
         {
-            if clipboard_helper::copy_via_clipboard_helper("wl-copy", &[], text) {
-                return true;
-            }
-            // X11: prefer xclip/xsel over arboard. arboard's X11 backend sets the
-            // selection on a connection it owns and then closes it when the
-            // `Clipboard` is dropped, so the selection owner disappears and the
-            // clipboard silently reverts (issue #684) even though `set_text`
-            // returned Ok. xclip and xsel fork a background process that keeps
-            // owning the selection until a paste, which is what users expect.
-            if clipboard_helper::copy_via_clipboard_helper(
-                "xclip",
-                &["-selection", "clipboard"],
-                text,
-            ) {
-                return true;
-            }
-            if clipboard_helper::copy_via_clipboard_helper(
-                "xsel",
-                &["--clipboard", "--input"],
-                text,
-            ) {
-                return true;
-            }
-            if arboard::Clipboard::new()
-                .and_then(|mut cb| cb.set_text(text.to_string()))
-                .is_ok()
-            {
-                return true;
+            // wl-clipboard falls back to `$XDG_RUNTIME_DIR/wayland-0` when
+            // WAYLAND_DISPLAY is unset, so in a display-less SSH session whose
+            // XDG_RUNTIME_DIR still points at the server's desktop session,
+            // wl-copy "succeeds" by writing the *server's* clipboard. That is
+            // false success #497 in a new costume: the client machine where
+            // the user pastes never receives the text, and OSC 52 (the only
+            // path that reaches the terminal client) is never attempted.
+            // `clipboard_mode` (config/env) overrides the session-shape
+            // detection below; `false` is the conservative answer that keeps
+            // local behavior byte-identical to the pre-fix chain.
+            if native_clipboard_applies(crate::config::config().display.clipboard_mode) {
+                if clipboard_helper::copy_via_clipboard_helper("wl-copy", &[], text) {
+                    return true;
+                }
+                // X11: prefer xclip/xsel over arboard. arboard's X11 backend sets the
+                // selection on a connection it owns and then closes it when the
+                // `Clipboard` is dropped, so the selection owner disappears and the
+                // clipboard silently reverts (issue #684) even though `set_text`
+                // returned Ok. xclip and xsel fork a background process that keeps
+                // owning the selection until a paste, which is what users expect.
+                if clipboard_helper::copy_via_clipboard_helper(
+                    "xclip",
+                    &["-selection", "clipboard"],
+                    text,
+                ) {
+                    return true;
+                }
+                if clipboard_helper::copy_via_clipboard_helper(
+                    "xsel",
+                    &["--clipboard", "--input"],
+                    text,
+                ) {
+                    return true;
+                }
+                if arboard::Clipboard::new()
+                    .and_then(|mut cb| cb.set_text(text.to_string()))
+                    .is_ok()
+                {
+                    return true;
+                }
             }
             copy_to_clipboard_osc52(text)
         }
@@ -518,6 +532,70 @@ fn copy_to_clipboard_osc52(text: &str) -> bool {
     // OSC 52: ESC ] 52 ; c ; <base64> BEL
     let seq = format!("\x1b]52;c;{}\x07", encoded);
     out.write_all(seq.as_bytes()).is_ok() && out.flush().is_ok()
+}
+
+/// Whether the Linux native clipboard chain (wl-copy/xclip/xsel/arboard) should
+/// be attempted before OSC 52, per `[display] clipboard_mode` (see
+/// `ClipboardMode`) and session shape.
+///
+/// The native tools write the clipboard server of the machine they run on,
+/// which is the right target for local sessions. `auto` skips them only for
+/// genuinely display-less sessions that are known-remote (SSH_* set): there,
+/// wl-clipboard's `$XDG_RUNTIME_DIR/wayland-0` fallback can "succeed" into the
+/// server's own desktop clipboard and the OSC 52 client copy never runs. When
+/// SSH_* markers are absent (local daemon, containers, multiplexers that scrub
+/// the environment) `auto` keeps the native chain, exactly as before; those
+/// multiplexer users can pin `clipboard_mode = "osc52"`.
+#[cfg(all(not(windows), not(target_os = "macos"), not(test)))]
+fn native_clipboard_applies(mode: crate::config::ClipboardMode) -> bool {
+    native_clipboard_applies_for(
+        mode,
+        || have_display_server(),
+        || have_ssh_session_markers(),
+    )
+}
+
+/// Pure decision behind `native_clipboard_applies`, injectable for tests.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn native_clipboard_applies_for(
+    mode: crate::config::ClipboardMode,
+    display_server: impl Fn() -> bool,
+    ssh_session: impl Fn() -> bool,
+) -> bool {
+    match mode {
+        crate::config::ClipboardMode::Native => true,
+        crate::config::ClipboardMode::Osc52 => false,
+        crate::config::ClipboardMode::Auto => display_server() || !ssh_session(),
+    }
+}
+
+/// Whether any display server is explicitly advertised to this process.
+#[cfg(all(not(windows), not(target_os = "macos"), not(test)))]
+fn have_display_server() -> bool {
+    have_display_server_for(
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("DISPLAY").is_some(),
+    )
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn have_display_server_for(wayland: bool, x11: bool) -> bool {
+    wayland || x11
+}
+
+/// Whether sshd marked this process tree as a login session.
+#[cfg(all(not(windows), not(target_os = "macos"), not(test)))]
+fn have_ssh_session_markers() -> bool {
+    have_ssh_session_markers_for(
+        std::env::var_os("SSH_CONNECTION").is_some(),
+        std::env::var_os("SSH_TTY").is_some(),
+        std::env::var_os("SSH_CLIENT").is_some(),
+    )
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn have_ssh_session_markers_for(connection: bool, tty: bool, client: bool) -> bool {
+    connection || tty || client
 }
 
 pub(super) fn effort_display_label(effort: &str) -> &str {

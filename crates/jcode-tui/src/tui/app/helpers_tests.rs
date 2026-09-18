@@ -564,3 +564,77 @@ fn backdated_now_never_panics_and_prefers_past_instants() {
     let zero = super::backdated_now(Duration::ZERO);
     assert!(zero <= Instant::now());
 }
+
+/// Linux clipboard routing decisions (issue: wl-copy false success over SSH).
+/// The native chain must be skipped only for display-less known-remote
+/// sessions; every other shape keeps the historical always-native ordering.
+#[cfg(all(test, not(any(windows, target_os = "macos"))))]
+mod clipboard_routing_tests {
+    use super::super::{
+        have_display_server_for, have_ssh_session_markers_for, native_clipboard_applies_for,
+    };
+    use crate::config::ClipboardMode;
+
+    #[test]
+    fn auto_keeps_native_for_local_desktop() {
+        assert!(native_clipboard_applies_for(
+            ClipboardMode::Auto,
+            || have_display_server_for(true, false),
+            || have_ssh_session_markers_for(false, false, false)
+        ));
+    }
+
+    #[test]
+    fn auto_keeps_native_for_displayless_local_daemon() {
+        // Container / daemonized local sessions: no display, but also no SSH
+        // markers, so the historical native-first chain is preserved.
+        assert!(native_clipboard_applies_for(
+            ClipboardMode::Auto,
+            || have_display_server_for(false, false),
+            || have_ssh_session_markers_for(false, false, false)
+        ));
+    }
+
+    #[test]
+    fn auto_goes_osc52_for_displayless_ssh_session() {
+        // The false-success bug: SSH session, no advertised display, but
+        // wl-copy would still reach the server desktop via the wayland-0
+        // fallback and "win" without the client ever getting the text.
+        assert!(!native_clipboard_applies_for(
+            ClipboardMode::Auto,
+            || have_display_server_for(false, false),
+            || have_ssh_session_markers_for(true, true, true)
+        ));
+    }
+
+    #[test]
+    fn auto_keeps_native_inside_ssh_with_forwarded_display() {
+        // X/Wayland forwarding: the native server is the client's clipboard.
+        assert!(native_clipboard_applies_for(
+            ClipboardMode::Auto,
+            || have_display_server_for(false, true),
+            || have_ssh_session_markers_for(true, true, true)
+        ));
+    }
+
+    #[test]
+    fn explicit_modes_ignore_session_shape() {
+        assert!(native_clipboard_applies_for(
+            ClipboardMode::Native,
+            || have_display_server_for(false, false),
+            || have_ssh_session_markers_for(true, true, true)
+        ));
+        assert!(!native_clipboard_applies_for(
+            ClipboardMode::Osc52,
+            || have_display_server_for(true, true),
+            || have_ssh_session_markers_for(false, false, false)
+        ));
+    }
+
+    #[test]
+    fn any_single_ssh_marker_counts_as_remote() {
+        assert!(have_ssh_session_markers_for(false, false, true));
+        assert!(have_ssh_session_markers_for(false, true, false));
+        assert!(!have_ssh_session_markers_for(false, false, false));
+    }
+}

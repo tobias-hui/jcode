@@ -1,7 +1,7 @@
 //! `[display]` section of the config: TUI/CLI presentation settings.
 
 use crate::{
-    DiagramDisplayMode, DiffDisplayMode, LatexRenderingMode, MarkdownSpacingMode,
+    ClipboardMode, DiagramDisplayMode, DiffDisplayMode, LatexRenderingMode, MarkdownSpacingMode,
     NativeScrollbarConfig, OverscrollStatusMode, ReasoningDisplayMode, default_true,
 };
 use serde::{Deserialize, Serialize};
@@ -126,6 +126,10 @@ pub struct DisplayConfig {
     /// reveal when scrolling past the bottom, "on" keeps it always visible.
     #[serde(default, deserialize_with = "crate::serde_lenient::lenient_enum")]
     pub overscroll_status: OverscrollStatusMode,
+    /// Linux clipboard backend for text copies: auto/native/osc52
+    /// (default: auto). See `ClipboardMode`.
+    #[serde(default, deserialize_with = "crate::serde_lenient::lenient_enum")]
+    pub clipboard_mode: ClipboardMode,
 }
 impl Default for DisplayConfig {
     fn default() -> Self {
@@ -166,6 +170,7 @@ impl Default for DisplayConfig {
             external_sessions: true,
             usage_display: "left".to_string(),
             overscroll_status: OverscrollStatusMode::default(),
+            clipboard_mode: ClipboardMode::default(),
         }
     }
 }

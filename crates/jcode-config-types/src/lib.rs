@@ -179,6 +179,27 @@ pub enum DiagramPanePosition {
     Top,
 }
 
+/// Which clipboard backend text copies use on Linux.
+///
+/// Native clipboard servers (`wl-copy`, `xclip`, `arboard`) own the clipboard
+/// of the machine jcode runs on. Over SSH the user pastes on the *client*,
+/// which only OSC 52 reaches, so `auto` skips the native path in display-less
+/// SSH sessions (see `tui::app::helpers` in jcode-tui).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardMode {
+    /// Native servers when a display server is reachable or the session looks
+    /// local; OSC 52 in display-less SSH sessions.
+    #[default]
+    Auto,
+    /// Always try native clipboard servers first (local desktop behavior).
+    Native,
+    /// Always copy via OSC 52 to the terminal client's clipboard, even with a
+    /// display server present (e.g. a terminal multiplexer that strips SSH_*
+    /// variables while forwarding OSC 52).
+    Osc52,
+}
+
 /// How much vertical spacing to use when rendering markdown blocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

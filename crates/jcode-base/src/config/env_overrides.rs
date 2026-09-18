@@ -289,6 +289,14 @@ impl Config {
         if let Ok(v) = std::env::var("JCODE_COPY_BADGE_ALT_LABEL") {
             self.display.copy_badge_alt_label = v;
         }
+        if let Ok(v) = std::env::var("JCODE_CLIPBOARD_MODE") {
+            match v.to_lowercase().as_str() {
+                "auto" => self.display.clipboard_mode = ClipboardMode::Auto,
+                "native" => self.display.clipboard_mode = ClipboardMode::Native,
+                "osc52" | "osc-52" | "osc_52" => self.display.clipboard_mode = ClipboardMode::Osc52,
+                _ => {}
+            }
+        }
         if let Ok(v) = std::env::var("JCODE_COMPACT_NOTIFICATIONS") {
             if let Some(parsed) = parse_env_bool(&v) {
                 self.display.compact_notifications = parsed;

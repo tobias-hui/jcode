@@ -1,7 +1,7 @@
 use super::{
-    AmbientConfig, Config, DiffDisplayMode, DisplayConfig, HookCommands, LatexRenderingMode,
-    McpToolsMode, ProviderConfig, SessionPickerResumeAction, SwarmSpawnMode, ToolConfig,
-    config_env_fingerprint, populate_context_limits_from_config_ref,
+    AmbientConfig, ClipboardMode, Config, DiffDisplayMode, DisplayConfig, HookCommands,
+    LatexRenderingMode, McpToolsMode, ProviderConfig, SessionPickerResumeAction, SwarmSpawnMode,
+    ToolConfig, config_env_fingerprint, populate_context_limits_from_config_ref,
 };
 use std::ffi::OsString;
 use std::path::Path;
@@ -146,6 +146,40 @@ fn latex_rendering_environment_override_accepts_aliases() {
     cfg.apply_env_overrides();
     assert_eq!(cfg.display.latex_rendering, LatexRenderingMode::Image);
     restore_env_var("JCODE_LATEX_RENDERING", previous);
+}
+
+#[test]
+fn clipboard_mode_defaults_auto_and_parses_from_toml() {
+    let cfg = Config::default();
+    assert_eq!(cfg.display.clipboard_mode, ClipboardMode::Auto);
+
+    let cfg: Config = toml::from_str("[display]\nclipboard_mode = \"osc52\"\n")
+        .expect("clipboard_mode should parse");
+    assert_eq!(cfg.display.clipboard_mode, ClipboardMode::Osc52);
+
+    // A bad value falls back to the default instead of failing the load
+    // (lenient_enum), matching every other display enum.
+    let cfg: Config = toml::from_str("[display]\nclipboard_mode = \"nonsense\"\n")
+        .expect("unknown clipboard_mode should still parse leniently");
+    assert_eq!(cfg.display.clipboard_mode, ClipboardMode::Auto);
+}
+
+#[test]
+fn clipboard_mode_environment_override_accepts_aliases() {
+    let _guard = crate::storage::lock_test_env();
+    for (raw, want) in [
+        ("osc52", ClipboardMode::Osc52),
+        ("OSC-52", ClipboardMode::Osc52),
+        ("native", ClipboardMode::Native),
+        ("auto", ClipboardMode::Auto),
+    ] {
+        let previous = std::env::var_os("JCODE_CLIPBOARD_MODE");
+        crate::env::set_var("JCODE_CLIPBOARD_MODE", raw);
+        let mut cfg = Config::default();
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.display.clipboard_mode, want, "raw value {raw:?}");
+        restore_env_var("JCODE_CLIPBOARD_MODE", previous);
+    }
 }
 
 #[test]

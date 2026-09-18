@@ -250,6 +250,15 @@ prompt_entry_animation = true
 # Empty = auto ("⌥" on macOS, "Alt" elsewhere). Examples: "Option", "Alt", "⌥".
 # copy_badge_alt_label = ""
 
+# Linux clipboard backend for text copies: "auto" (default), "native", or
+# "osc52". "auto" uses native servers (wl-copy/xclip/arboard) when a display
+# server is reachable or the session looks local, and falls back to OSC 52 in
+# display-less SSH sessions so the copy lands in the *client* machine's
+# clipboard. Force "osc52" inside terminal multiplexers that strip SSH_*
+# variables but forward OSC 52 (e.g. luvus); force "native" to keep local
+# desktop behavior. No effect on Windows/macOS.
+# clipboard_mode = "auto"
+
 # Color theme: "auto" (query the terminal background), "dark", or "light".
 # theme = "auto"
 
