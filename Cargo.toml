@@ -4,6 +4,7 @@ version = "0.84.0"
 description = "Possibly the greatest coding agent ever built — blazing-fast TUI, multi-model, swarm coordination, 30+ tools"
 edition = "2024"
 autobins = false
+default-run = "jcode"
 
 [workspace]
 members = [

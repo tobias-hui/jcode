@@ -1207,6 +1207,16 @@ mod tests {
     }
 
     #[test]
+    fn wide_d2_png_does_not_reserve_viewport_fraction_as_height() {
+        // The Chinese D2 smoke image is 2188×598. At the normal 126-column
+        // chat width its aspect ratio should occupy roughly one screen-width
+        // image, not the whole viewport-height fraction used for tall images.
+        let (rows, cols) = fit_geometry(2188, 598, 126, 50);
+        assert!(rows <= 18, "wide image reserved too many rows: {rows}");
+        assert!(cols >= 120, "wide image should use the chat width: {cols}");
+    }
+
+    #[test]
     fn build_section_records_region_width() {
         let items = vec![item(600, 400)];
         let section = build_section(&items, 80, 40, false, true, &AllFit);

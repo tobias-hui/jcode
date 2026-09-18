@@ -1283,6 +1283,19 @@ pub fn render_image_widget_fit_stable(
     let visible_width = image_area.width.min(full_cols);
     let visible_height = image_area.height.min(full_rows.saturating_sub(skip_rows));
 
+    // The transcript region can be taller than the fitted image when an older
+    // placeholder or a cached geometry estimate overstates its height. Kitty's
+    // virtual-placement helper uses `area.height` for its cursor-return stride,
+    // so passing the full placeholder here makes the image's rows inherit that
+    // stale height and leaves a visible vertical gap. Restrict the protocol
+    // area to the rows that actually contain image pixels. The transcript still
+    // owns the original region for scrolling, but Kitty must only place the
+    // visible image rectangle.
+    image_area.height = visible_height;
+    if visible_width == 0 || visible_height == 0 {
+        return true;
+    }
+
     if let Ok(mut dbg) = MERMAID_DEBUG.lock() {
         dbg.stats.image_state_hits += 1;
         dbg.stats.fit_state_reuse_hits += 1;

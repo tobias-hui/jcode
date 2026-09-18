@@ -255,7 +255,31 @@ pub(super) fn iterm2_images_opt_in() -> bool {
         .unwrap_or(false)
 }
 
+/// Parse `JCODE_TERMINAL_CELL_SIZE` as `WIDTHxHEIGHT` (or `WIDTH,HEIGHT`).
+///
+/// Some terminal multiplexers forward graphics but do not expose the outer
+/// terminal's pixel dimensions through `TIOCGWINSZ`. In that case callers can
+/// supply the measured cell dimensions without changing protocol selection.
+fn parse_terminal_cell_size(raw: &str) -> Option<(u16, u16)> {
+    let mut parts = raw.trim().split(['x', 'X', ',']);
+    let width = parts.next()?.trim().parse::<u16>().ok()?;
+    let height = parts.next()?.trim().parse::<u16>().ok()?;
+    (parts.next().is_none() && width > 0 && height > 0).then_some((width, height))
+}
+
 fn query_font_size() -> (u16, u16) {
+    if let Some((width, height)) = std::env::var("JCODE_TERMINAL_CELL_SIZE")
+        .ok()
+        .as_deref()
+        .and_then(parse_terminal_cell_size)
+    {
+        crate::log_info(&format!(
+            "Using JCODE_TERMINAL_CELL_SIZE override: {}x{} pixels/cell",
+            width, height
+        ));
+        return (width, height);
+    }
+
     match crossterm::terminal::window_size() {
         Ok(ws) if ws.columns > 0 && ws.rows > 0 && ws.width > 0 && ws.height > 0 => {
             let fw = ws.width / ws.columns;
@@ -672,6 +696,17 @@ pub fn get_font_size() -> Option<(u16, u16)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_terminal_cell_size_override() {
+        assert_eq!(parse_terminal_cell_size("11x25"), Some((11, 25)));
+        assert_eq!(parse_terminal_cell_size("11 X 25"), Some((11, 25)));
+        assert_eq!(parse_terminal_cell_size("11,25"), Some((11, 25)));
+        assert_eq!(parse_terminal_cell_size("0x25"), None);
+        assert_eq!(parse_terminal_cell_size("11x0"), None);
+        assert_eq!(parse_terminal_cell_size("11x25x30"), None);
+        assert_eq!(parse_terminal_cell_size("not-a-size"), None);
+    }
 
     /// An external image (LaTeX formula PNG, `read` of an image file) must be
     /// recoverable after the bounded render cache evicts it. Before this, the

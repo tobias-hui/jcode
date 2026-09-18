@@ -346,6 +346,35 @@ mod fallback_note_tests {
     }
 
     #[test]
+    fn wide_d2_render_uses_aspect_height_in_the_default_inline_level() {
+        let hash = 0xD2C0_598u64;
+        set_mermaid_inline_expand_level(hash, 0);
+        let lines = result_to_lines_with_capabilities(
+            RenderResult::Image {
+                hash,
+                path: PathBuf::from("d2-cjk-test.png"),
+                width: 2188,
+                height: 598,
+            },
+            Some(126),
+            false,
+            true,
+            false,
+        );
+
+        let (_, rows, cols) = lines
+            .iter()
+            .find_map(parse_inline_image_placeholder)
+            .expect("D2 image should emit an inline placeholder");
+        assert!(rows <= 18, "wide D2 image reserved too many rows: {rows}");
+        assert!(
+            cols >= 118,
+            "wide D2 image should use the chat width: {cols}"
+        );
+        set_mermaid_inline_expand_level(hash, 0);
+    }
+
+    #[test]
     fn halfblock_result_attaches_note_after_image_placeholder() {
         let lines = result_to_lines_with_capabilities(image_result(), Some(80), false, true, true);
         assert!(parse_inline_image_placeholder(&lines[0]).is_some());
@@ -571,7 +600,8 @@ pub fn terminal_theme() -> Theme {
         // (the typical Linux case). resvg matches the first family in this list
         // that exists in the loaded font DB.
         font_family: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, \
-                      \"Noto Sans\", \"DejaVu Sans\", \"Liberation Sans\", sans-serif"
+                      \"Noto Sans CJK SC\", \"Noto Sans\", \"DejaVu Sans\", \
+                      \"Liberation Sans\", sans-serif"
             .to_string(),
         font_size: 15.0,
         primary_color: "#313244".to_string(),

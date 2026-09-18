@@ -109,6 +109,7 @@ fn render_d2(content: &str, terminal_width: Option<u16>, register_active: bool) 
     if !svg.contains("<svg") {
         return RenderResult::Error("D2 renderer returned invalid SVG output".to_string());
     }
+    let svg = normalize_d2_fonts(&svg);
 
     if let Some(parent) = cache_path.parent()
         && let Err(error) = std::fs::create_dir_all(parent)
@@ -129,6 +130,48 @@ fn render_d2(content: &str, terminal_width: Option<u16>, register_active: bool) 
 
     cached_result(&cache_path, register_active)
         .unwrap_or_else(|| RenderResult::Error("D2 PNG output could not be registered".to_string()))
+}
+
+/// D2 embeds a small Source Sans Pro subset in every SVG. It is sufficient for
+/// Latin labels, but the subset does not contain CJK glyphs. Browsers can fall
+/// back per glyph, while resvg treats the embedded family as the selected face
+/// and can produce missing-glyph output instead. Replace only the quoted text
+/// references, not the @font-face declarations, with a system fallback that
+/// includes CJK coverage.
+fn normalize_d2_fonts(svg: &str) -> String {
+    const FALLBACK: &str = "font-family: \"Noto Sans CJK SC\", \"Noto Sans\", \"DejaVu Sans\", \"Liberation Sans\", sans-serif";
+
+    let mut output = String::with_capacity(svg.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = svg[cursor..].find("font-family:") {
+        let start = cursor + relative_start;
+        output.push_str(&svg[cursor..start]);
+        let Some(relative_end) = svg[start..].find(';') else {
+            output.push_str(&svg[start..]);
+            return output;
+        };
+        let end = start + relative_end;
+        let declaration = &svg[start..end];
+        if declaration.contains('"')
+            && declaration.contains("d2-")
+            && (declaration.contains("-font-regular")
+                || declaration.contains("-font-bold")
+                || declaration.contains("-font-italic"))
+        {
+            output.push_str(FALLBACK);
+            if declaration.contains("-font-bold") {
+                output.push_str(";font-weight: 700");
+            } else if declaration.contains("-font-italic") {
+                output.push_str(";font-style: italic");
+            }
+        } else {
+            output.push_str(declaration);
+        }
+        output.push(';');
+        cursor = end + 1;
+    }
+    output.push_str(&svg[cursor..]);
+    output
 }
 
 fn validate_source(content: &str) -> Result<(), String> {
@@ -204,6 +247,22 @@ mod tests {
         assert!(validate_source("import ./other.d2").is_err());
         assert!(validate_source("icon: https://example.com/icon.svg").is_err());
         assert!(validate_source("client -> api").is_ok());
+    }
+
+    #[test]
+    fn replaces_embedded_subset_font_references_without_touching_font_faces() {
+        let svg = r#"<style>
+@font-face { font-family: d2-123-font-regular; src: url(data:font/woff;base64,abc); }
+.text { font-family: "d2-123-font-regular"; }
+.text-bold { font-family: "d2-123-font-bold"; }
+.text-italic { font-family: "d2-123-font-italic"; }
+</style>"#;
+        let normalized = normalize_d2_fonts(svg);
+        assert!(normalized.contains("font-family: d2-123-font-regular"));
+        assert!(!normalized.contains("font-family: \"d2-123-font-regular\""));
+        assert!(normalized.contains("font-weight: 700"));
+        assert!(normalized.contains("font-style: italic"));
+        assert!(normalized.contains("Noto Sans CJK SC"));
     }
 
     #[test]

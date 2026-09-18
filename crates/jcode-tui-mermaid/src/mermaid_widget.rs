@@ -331,10 +331,6 @@ fn render_image_widget_fit_inner(
         return 0;
     }
 
-    if draw_border {
-        draw_left_border(buf, area);
-    }
-
     let image_area = Rect {
         x: area.x + border_width,
         y: area.y,
@@ -355,11 +351,56 @@ fn render_image_widget_fit_inner(
             .map(|picker| image_area.width as u32 * picker.font_size().0 as u32)
     };
     let cached = get_cached_diagram_prefer_width(hash, min_cached_width);
-    let (img_width, path) = if let Some(cached) = cached {
-        (cached.width, Some(cached.path))
+    let (img_width, img_height, path) = if let Some(cached) = cached {
+        (cached.width, cached.height, Some(cached.path))
     } else {
-        (0, None)
+        (0, 0, None)
     };
+
+    // The fallback renderer used to pass the entire placeholder to
+    // ratatui-image. For a wide image that preserves aspect ratio inside the
+    // box, but Kitty/halfblocks still receives the box height and the border
+    // extends through the unused rows. Derive the real fitted height first and
+    // use that same rectangle for both the image protocol and the border.
+    let render_height = if img_width > 0 && img_height > 0 {
+        let (font_w, font_h) = PICKER
+            .get()
+            .and_then(|p| p.as_ref())
+            .map(|picker| picker.font_size())
+            .unwrap_or((8, 16));
+        let source_width_px = if scale_up {
+            image_area.width as u32 * font_w.max(1) as u32
+        } else {
+            img_width.min(image_area.width as u32 * font_w.max(1) as u32)
+        };
+        let fitted_height_px = (img_height as u64)
+            .saturating_mul(source_width_px as u64)
+            .checked_div(img_width.max(1) as u64)
+            .unwrap_or(1)
+            .max(1);
+        fitted_height_px
+            .div_ceil(font_h.max(1) as u64)
+            .min(image_area.height as u64)
+            .max(1) as u16
+    } else {
+        image_area.height
+    };
+    let fitted_area = Rect {
+        height: render_height,
+        ..image_area
+    };
+
+    if draw_border {
+        draw_left_border(
+            buf,
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: render_height,
+            },
+        );
+    }
 
     let render_area = if centered && img_width > 0 {
         let rendered_width = if let Some(Some(picker)) = PICKER.get() {
@@ -374,10 +415,10 @@ fn render_image_widget_fit_inner(
             x: image_area.x + x_offset,
             y: image_area.y,
             width: rendered_width,
-            height: image_area.height,
+            height: render_height,
         }
     } else {
-        image_area
+        fitted_area
     };
 
     {
