@@ -212,6 +212,10 @@ pub(super) fn handle_bus_event(
             app.maybe_apply_event_driven_onboarding_model();
             true
         }
+        Ok(BusEvent::ModelUsageUpdated(_)) => {
+            app.invalidate_model_picker_cache();
+            true
+        }
         Ok(BusEvent::AuthCatalogRefreshReady) => {
             app.finish_auth_catalog_refresh();
             true
@@ -395,7 +399,7 @@ fn apply_terminal_event(
 ) -> Result<bool> {
     match event {
         Some(Ok(Event::FocusGained)) => {
-            crate::tui::reapply_configured_terminal_modes();
+            crate::tui::reapply_configured_terminal_modes_after_focus();
             let redraw = app.set_client_focused(true);
             app.note_client_focus(true);
             Ok(redraw)

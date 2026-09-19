@@ -34,17 +34,23 @@
 //! SSH child, not the remote shared daemon. `connect_timeout` bounds startup and
 //! hello independently of the ordinary request timeout.
 
+mod auth;
 mod client;
 mod diagnostics;
 mod errors;
 mod launch;
 mod ssh;
 mod structured;
+pub mod worktrees;
 
 #[cfg(test)]
 #[path = "sdk_tests/parity.rs"]
 mod parity_tests;
 
+pub use auth::{
+    AuthClient, AuthFlow, AuthInputKind, AuthOptions, AuthPrompt, AuthResult, LoginMethod,
+    LoginProvider,
+};
 pub use client::{
     ConnectOptions, EventStream, FileContent, FileStatus, GlobalEventStream, GlobalEventsOptions,
     JcodeClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall, Transport, TurnResult,
@@ -52,11 +58,17 @@ pub use client::{
 };
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
+pub use jcode_harness_api::{
+    SessionEditStats, enrich_sessions_from_edit_stats, enrich_sessions_from_local_edit_stats,
+    enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state,
+};
 pub use launch::{
     LaunchOptions, LaunchedInstance, WakeMode, ensure_runtime, inherit_credentials,
     launch_instance, socket_accepts, user_app_config_dir, user_jcode_home, wait_for_socket,
 };
 pub use ssh::SshConnectOptions;
+#[cfg(unix)]
+pub use ssh::{SharedSshTransport, WeakSharedSshTransport};
 pub use structured::{
     RunStructuredError, RunStructuredOptions, StructuredEventCallback, StructuredOutputAttempt,
     StructuredOutputError, StructuredOutputSchema, StructuredSchemaError, StructuredTurnResult,
@@ -67,5 +79,7 @@ pub use structured::{
 pub use jcode_harness_api as api;
 pub use jcode_harness_api::{
     ApiEvent, ApiRequest, HistoryMessage, ModelRouteInfo, PermissionDecision, RenderedImage,
-    RenderedImageAnchor, RenderedImageSource, SessionInfo, TextMatch, api_socket_path,
+    RenderedImageAnchor, RenderedImageSource, ResponseStats, SessionInfo, SidePanelPage,
+    SidePanelPageFormat, SidePanelPageSource, SidePanelSnapshot, TextMatch, api_socket_path,
 };
+pub use jcode_harness_api::{ModelUsage, compare_model_usage};

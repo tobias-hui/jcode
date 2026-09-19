@@ -213,6 +213,26 @@ pub(super) fn draw_prompt_history_search_overlay(
 /// Called after the chunked layout (and info widgets) have rendered so the
 /// palette floats over existing rows instead of reserving layout height.
 pub(super) fn draw_command_suggestions_overlay(frame: &mut Frame, app: &dyn TuiState, area: Rect) {
+    if let Some(picker) = app.inline_interactive_state()
+        && picker.kind == crate::tui::PickerKind::Model
+    {
+        // Use the command palette surface, not a separate bordered picker.
+        // Keep it above the composer and size the window before building rows
+        // so the selected model remains visible even on short terminals.
+        let height = area.y.saturating_sub(frame.area().y);
+        let lines = super::inline_interactive_ui::model_suggestion_lines(picker, height as usize);
+        if !lines.is_empty() && area.width > 0 {
+            let rect = Rect::new(
+                area.x,
+                area.y - lines.len() as u16,
+                area.width,
+                lines.len() as u16,
+            );
+            frame.render_widget(ratatui::widgets::Clear, rect);
+            frame.render_widget(Paragraph::new(lines), rect);
+        }
+        return;
+    }
     let suggestions = app.command_suggestions();
     if !command_suggestions_active(app, &suggestions) {
         return;
@@ -1116,6 +1136,18 @@ fn streaming_status_spans(
 mod tests {
     use super::*;
     use ratatui::style::Modifier;
+
+    #[test]
+    fn swarm_effort_model_status_uses_shared_label() {
+        for mode in ["swarm", "swarm-deep"] {
+            assert_eq!(
+                overscroll_short_reasoning(mode),
+                Some(crate::tui::app::effort_display_label(mode))
+            );
+        }
+        assert_eq!(overscroll_short_reasoning(" high "), Some("high"));
+        assert_eq!(overscroll_short_reasoning(" "), None);
+    }
 
     #[test]
     fn running_tool_header_emphasizes_detail_over_tool_name() {
@@ -2201,6 +2233,7 @@ fn overscroll_short_reasoning(effort: &str) -> Option<&str> {
         return None;
     }
     Some(match effort {
+        "swarm" | "swarm-deep" => crate::tui::app::effort_display_label(effort),
         "max" => "max",
         "xhigh" => "xhigh",
         "high" => "high",

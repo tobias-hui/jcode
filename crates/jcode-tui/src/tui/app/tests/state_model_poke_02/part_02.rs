@@ -240,6 +240,7 @@ model_picker_hidden = [
             available: true,
             detail: String::new(),
             cheapness: None,
+            usage: None,
         };
         let mut app = create_test_app();
         app.is_remote = true;

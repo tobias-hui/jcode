@@ -162,6 +162,7 @@ pub fn build_anthropic_oauth_route(
         api_method: "claude-oauth".to_string(),
         available,
         detail: detail.into(),
+        usage: None,
         cheapness: cheapness_for_route(model, "Anthropic", "claude-oauth"),
     }
 }
@@ -189,6 +190,7 @@ pub fn build_chatgpt_web_route() -> ModelRoute {
         api_method: "chatgpt-web".to_string(),
         available: true,
         detail: "logged-in Firefox ChatGPT session".to_string(),
+        usage: None,
         cheapness: None,
     }
 }
@@ -205,6 +207,7 @@ fn build_openai_route(
         api_method: api_method.to_string(),
         available,
         detail: detail.into(),
+        usage: None,
         cheapness: cheapness_for_route(model, "OpenAI", api_method),
     }
 }
@@ -216,6 +219,7 @@ pub fn build_copilot_route(model: &str, available: bool, detail: impl Into<Strin
         api_method: "copilot".to_string(),
         available,
         detail: detail.into(),
+        usage: None,
         cheapness: cheapness_for_route(model, "Copilot", "copilot"),
     }
 }
@@ -231,6 +235,7 @@ pub fn build_openrouter_auto_route(
         api_method: "openrouter".to_string(),
         available,
         detail: auto_detail.into(),
+        usage: None,
         cheapness: cheapness_for_route(model, "auto", "openrouter"),
     }
 }
@@ -256,6 +261,7 @@ pub fn build_openrouter_endpoint_route(
         api_method: "openrouter".to_string(),
         available,
         detail,
+        usage: None,
         cheapness: openrouter_pricing_from_model_pricing(
             &endpoint.pricing,
             RouteCostSource::OpenRouterEndpoint,
@@ -279,6 +285,7 @@ pub fn build_openrouter_fallback_provider_route(
         api_method: "openrouter".to_string(),
         available: true,
         detail: String::new(),
+        usage: None,
         cheapness: cheapness_for_route(catalog_model, provider, "openrouter"),
     }
 }

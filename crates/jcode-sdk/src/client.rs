@@ -366,6 +366,16 @@ impl Drop for JcodeClient {
 }
 
 impl JcodeClient {
+    /// Retain this client's shared SSH master for reconnecting independent API
+    /// channels. Returns None for isolated or already closed SSH channels.
+    #[cfg(unix)]
+    pub fn shared_ssh_transport(&self) -> Option<crate::SharedSshTransport> {
+        self.inner
+            .ssh_process
+            .as_ref()
+            .and_then(|process| process.shared_transport())
+    }
+
     /// Connect to a remote shared harness using system SSH credentials/config.
     ///
     /// The remote must have `jcode api --stdio`. Dropping the last client clone
@@ -778,6 +788,18 @@ impl JcodeClient {
         .map(drop)
     }
 
+    /// Submit a hidden continuation without a user transcript row or accept wait.
+    /// The caller, not the bridge, decides when recovery is appropriate.
+    pub fn send_system_reminder(&self, session_id: &str, reminder: &str) -> Result<()> {
+        self.notify(ApiRequest::SendMessage {
+            session_id: session_id.to_string(),
+            content: String::new(),
+            system_reminder: Some(reminder.to_string()),
+            images: Vec::new(),
+            no_reply: false,
+        })
+    }
+
     /// Send a user message.
     ///
     /// The harness does not reply to `send_message` at the request level: it
@@ -798,6 +820,7 @@ impl JcodeClient {
         self.notify(ApiRequest::SendMessage {
             session_id: session_id.to_string(),
             content: content.to_string(),
+            system_reminder: None,
             images,
             no_reply: false,
         })?;
@@ -983,6 +1006,20 @@ impl JcodeClient {
         {
             ApiEvent::CredentialUpdated { .. } => Ok(()),
             other => Err(unexpected("credential_updated", &other)),
+        }
+    }
+
+    /// Reload credentials saved by an out-of-band OAuth login. This does not
+    /// send a chat message or transport any credential material.
+    pub fn notify_auth_changed(&self, provider: &str) -> Result<()> {
+        match self
+            .request_ok(ApiRequest::NotifyAuthChanged {
+                provider: provider.to_string(),
+            })?
+            .event
+        {
+            ApiEvent::Ok => Ok(()),
+            other => Err(unexpected("ok", &other)),
         }
     }
 
@@ -1199,12 +1236,14 @@ impl JcodeClient {
                     input,
                     output,
                     cache_read_input,
+                    cache_creation_input,
                     ..
                 } => {
                     result.usage = Some(Usage {
                         input,
                         output,
                         cache_read_input,
+                        cache_creation_input,
                     })
                 }
                 ApiEvent::PermissionRequest { request_id, .. } if options.auto_approve => {
@@ -1288,6 +1327,7 @@ pub struct TurnResult {
     pub text: String,
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
+    /// Usage from the latest provider call in this turn, not a sum of calls.
     pub usage: Option<Usage>,
 }
 
@@ -1299,11 +1339,14 @@ pub struct ToolCall {
     pub error: Option<String>,
 }
 
+/// Provider-reported counters. Cache counters may be separate from input
+/// (Anthropic) or a subset of it (OpenAI), so do not blindly add them together.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
     pub input: u64,
     pub output: u64,
     pub cache_read_input: Option<u64>,
+    pub cache_creation_input: Option<u64>,
 }
 
 fn discover_global_sessions(
@@ -1368,6 +1411,25 @@ fn start_global_child(parent: &JcodeClient, control: &Arc<GlobalEventControl>, s
     let connection = if let Some(options) = &parent.ssh_options {
         let mut options = options.clone();
         options.client_name = format!("{}/global-events", parent.inner.client_name);
+        #[cfg(unix)]
+        let shared = parent.shared_ssh_transport();
+        #[cfg(unix)]
+        if let Some(shared) = shared {
+            shared.connect()
+        } else if parent
+            .inner
+            .ssh_process
+            .as_ref()
+            .is_some_and(|process| process.was_shared)
+        {
+            Err(Error::new(
+                ErrorKind::Disconnected,
+                "shared SSH parent channel is closed",
+            ))
+        } else {
+            JcodeClient::connect_ssh(options)
+        }
+        #[cfg(not(unix))]
         JcodeClient::connect_ssh(options)
     } else {
         JcodeClient::connect(ConnectOptions {
@@ -1512,12 +1574,14 @@ fn event_session(event: &ApiEvent) -> Option<&str> {
         | ToolInputDelta { session_id, .. }
         | ToolExec { session_id, .. }
         | ToolDone { session_id, .. }
+        | SidePanelState { session_id, .. }
         | TokenUsage { session_id, .. }
         | TurnDone { session_id, .. }
         | BackgroundProgress { session_id, .. }
         | MessageAccepted { session_id, .. }
         | PermissionRequest { session_id, .. }
         | SessionStatus { session_id, .. }
+        | SessionRecovery { session_id, .. }
         | ModelInfo { session_id, .. }
         | RuntimeInfo { session_id, .. }
         | ConnectionPhase { session_id, .. }

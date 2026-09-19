@@ -30,6 +30,41 @@ impl Provider for MockSummaryProvider {
     }
 }
 
+/// Isolate a test from the developer's real ~/.jcode config (which may set
+/// `[compaction] reactive_cap_tokens` / `max_context_tokens`) and from the
+/// env-mutating tests in this file: hold the env lock and point JCODE_HOME at
+/// an empty tempdir for the test's duration.
+struct IsolatedHome {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    _home: tempfile::TempDir,
+    restore: Option<std::ffi::OsString>,
+}
+
+impl IsolatedHome {
+    fn new() -> Self {
+        let lock = crate::storage::lock_test_env();
+        let restore = std::env::var_os("JCODE_HOME");
+        let home = tempfile::tempdir().unwrap();
+        crate::env::set_var("JCODE_HOME", home.path());
+        crate::config::invalidate_config_cache();
+        Self {
+            _lock: lock,
+            _home: home,
+            restore,
+        }
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        match &self.restore {
+            Some(home) => crate::env::set_var("JCODE_HOME", home),
+            None => crate::env::remove_var("JCODE_HOME"),
+        }
+        crate::config::invalidate_config_cache();
+    }
+}
+
 fn make_text_message(role: Role, text: &str) -> Message {
     Message {
         role,
@@ -96,6 +131,7 @@ fn test_new_message_after_restore_reenables_compaction() {
 
 #[test]
 fn test_token_estimate() {
+    let _iso = IsolatedHome::new();
     let manager = CompactionManager::new();
     // 100 chars = ~25 tokens (plus 18k overhead for full budget)
     let messages = vec![make_text_message(Role::User, &"x".repeat(100))];
@@ -938,6 +974,7 @@ fn test_persisted_state_round_trip_preserves_compacted_view() {
 
 #[test]
 fn test_context_usage_with_both_estimate_and_observed() {
+    let _iso = IsolatedHome::new();
     let mut manager = CompactionManager::new().with_budget(200_000);
     // Build messages totalling ~50k chars = ~12.5k token estimate
     let mut messages = Vec::new();
@@ -1114,6 +1151,7 @@ fn twelve_messages() -> Vec<Message> {
 
 #[test]
 fn test_reactive_cap_triggers_large_window_early() {
+    let _iso = IsolatedHome::new();
     // 1M window with a 500k cap: compacts at the cap, not at the 800k ratio.
     let mut manager = CompactionManager::new().with_budget(1_000_000);
     manager.compaction_config.reactive_cap_tokens = Some(500_000);
@@ -1137,6 +1175,7 @@ fn test_reactive_cap_triggers_large_window_early() {
 
 #[test]
 fn test_reactive_cap_does_not_affect_small_windows() {
+    let _iso = IsolatedHome::new();
     // 200k window: the 80% ratio (160k) fires before the 500k cap, so the cap
     // must not change behavior at all.
     let mut manager = CompactionManager::new().with_budget(200_000);
@@ -1155,6 +1194,7 @@ fn test_reactive_cap_does_not_affect_small_windows() {
 
 #[test]
 fn test_reactive_cap_disabled_by_default() {
+    let _iso = IsolatedHome::new();
     let mut manager = CompactionManager::new().with_budget(1_000_000);
     assert_eq!(manager.compaction_config.reactive_cap_tokens, None);
     let messages = twelve_messages();
@@ -1167,4 +1207,66 @@ fn test_reactive_cap_disabled_by_default() {
         !manager.should_compact_with(&messages),
         "with no cap configured the default ratio behavior is unchanged"
     );
+}
+
+#[test]
+fn max_context_tokens_caps_budget_from_large_window_models() {
+    // A 1M-window model with the default 0.80 trigger lets a session reach
+    // ~800k tokens per request before anything folds. The operator cap bounds
+    // that regardless of what the provider advertises.
+    let cfg = crate::config::CompactionConfig {
+        max_context_tokens: 200_000,
+        ..Default::default()
+    };
+    assert_eq!(CompactionManager::capped_budget(&cfg, 1_000_000), 200_000);
+    // A model smaller than the cap keeps its own window.
+    assert_eq!(CompactionManager::capped_budget(&cfg, 128_000), 128_000);
+}
+
+#[test]
+fn max_context_tokens_zero_means_no_cap() {
+    let cfg = crate::config::CompactionConfig::default();
+    assert_eq!(CompactionManager::capped_budget(&cfg, 1_000_000), 1_000_000);
+}
+
+#[test]
+fn max_context_tokens_applies_at_construction_and_reloads_before_requests() {
+    let _lock = crate::storage::lock_test_env();
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            if let Some(home) = &self.0 {
+                crate::env::set_var("JCODE_HOME", home);
+            } else {
+                crate::env::remove_var("JCODE_HOME");
+            }
+            crate::config::Config::invalidate_cache();
+        }
+    }
+    let home = tempfile::tempdir().unwrap();
+    let _restore = RestoreHome(std::env::var_os("JCODE_HOME"));
+    crate::env::set_var("JCODE_HOME", home.path());
+    let mut cfg = crate::config::Config::default();
+    cfg.compaction.max_context_tokens = 50_000;
+    cfg.save().unwrap();
+    let mut manager = CompactionManager::new();
+    assert_eq!(manager.token_budget(), 50_000);
+    manager.set_budget(1_000_000);
+    assert_eq!(manager.token_budget(), 50_000);
+
+    cfg.compaction.max_context_tokens = 10_000;
+    cfg.save().unwrap();
+    manager.ensure_context_fits(&[], Arc::new(MockSummaryProvider));
+    assert_eq!(manager.token_budget(), 10_000);
+
+    cfg.compaction.max_context_tokens = 80_000;
+    cfg.save().unwrap();
+    manager.set_budget(128_000);
+    assert_eq!(manager.token_budget(), 80_000);
+
+    cfg.compaction.max_context_tokens = 0;
+    cfg.save().unwrap();
+    manager.ensure_context_fits(&[], Arc::new(MockSummaryProvider));
+    assert_eq!(manager.token_budget(), 128_000);
+
 }

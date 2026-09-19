@@ -943,6 +943,59 @@ pub struct OpenRouterProvider {
 }
 
 impl OpenRouterProvider {
+    /// Apply a real (already resolved) effort without changing the stored swarm mode.
+    fn apply_resolved_reasoning_effort(
+        &self,
+        request: &mut Value,
+        effort: &str,
+        strict_openai_schema: bool,
+    ) -> bool {
+        if self.supports_deepseek_reasoning_effort() {
+            let effort = match effort {
+                "minimal" => "low",
+                "xhigh" => "high",
+                other => other,
+            };
+            if effort == "none" {
+                return false;
+            }
+            request["reasoning_effort"] = serde_json::json!(effort);
+        } else if self.supports_kimi_reasoning_effort() {
+            // The Kimi coding endpoint accepts reasoning_effort only as
+            // low/high/max (anything else is an HTTP 400) and applies its own
+            // native default when the field is absent (high for K3, max for
+            // K2.8 Preview), so map jcode's ladder onto that vocabulary.
+            // `none` is not a wire effort value: the docs' third-party mapping
+            // sends `thinking: {type: "disabled"}` instead.
+            if effort == "none" {
+                request["thinking"] = serde_json::json!({ "type": "disabled" });
+            } else {
+                let effort = if effort == "medium" { "high" } else { effort };
+                request["reasoning_effort"] = serde_json::json!(effort);
+            }
+        } else if self.supports_openai_reasoning_effort() {
+            // Strict endpoints such as Mistral reject the UX alias `max`.
+            let effort = if strict_openai_schema && effort == "max" {
+                "xhigh"
+            } else {
+                effort
+            };
+            if effort == "none" {
+                return false;
+            }
+            request["reasoning_effort"] = serde_json::json!(effort);
+        } else if Self::profile_supports_unified_reasoning(
+            self.profile_id.as_deref(),
+            self.send_openrouter_headers,
+        ) {
+            let effort = if effort == "max" { "xhigh" } else { effort };
+            request["reasoning"] = serde_json::json!({"effort": effort});
+        } else {
+            return false;
+        }
+        true
+    }
+
     fn profile_supports_reasoning_effort(profile_id: Option<&str>) -> bool {
         matches!(profile_id, Some(id) if id.eq_ignore_ascii_case("deepseek"))
     }

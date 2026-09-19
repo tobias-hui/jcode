@@ -17,6 +17,7 @@
     clippy::useless_conversion
 )]
 
+pub mod account_login;
 pub mod auth;
 pub mod background;
 pub mod browser;
@@ -57,6 +58,7 @@ pub mod memory_rerank;
 pub mod memory_types;
 pub mod message;
 pub mod model_pricing;
+pub mod model_usage;
 pub mod output_style;
 pub mod plan;
 pub mod platform;
@@ -94,6 +96,7 @@ pub mod todo;
 pub mod transport;
 pub mod usage;
 pub mod util;
+pub mod voice;
 #[cfg(not(feature = "embeddings"))]
 pub use embedding_stub as embedding;
 pub use jcode_core::{terminal_eprint, terminal_eprintln, terminal_print, terminal_println};

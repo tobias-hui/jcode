@@ -452,6 +452,7 @@ mod tests {
             available: true,
             detail: String::new(),
             cheapness: None,
+            usage: None,
         };
         let api_key = route("gpt-6-astra", "OpenAI", "openai-api-key");
         let oauth = route("gpt-6-astra", "OpenAI", "openai-oauth");
